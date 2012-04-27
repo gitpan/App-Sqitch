@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use v5.10;
+use v5.10.1;
 use utf8;
 use lib 't/lib';
 
@@ -57,10 +57,10 @@ throws_ok { $CLASS->new }
     'Should get an exception for missing sqitch param';
 my $array = [];
 throws_ok { $CLASS->new({ sqitch => $array }) }
-    qr/\QValidation failed for 'App::Sqitch' with value $array/,
+    qr/\QValidation failed for 'App::Sqitch' with value/,
     'Should get an exception for array sqitch param';
 throws_ok { $CLASS->new({ sqitch => 'foo' }) }
-    qr/\QValidation failed for 'App::Sqitch' with value foo/,
+    qr/\QValidation failed for 'App::Sqitch' with value/,
     'Should get an exception for string sqitch param';
 
 isa_ok $CLASS->new({sqitch => $sqitch}), $CLASS;
@@ -181,7 +181,7 @@ PARSEOPTSERR: {
     # Make sure that invalid options trigger an error.
     my $mock = Test::MockModule->new($CLASS);
     my @args;
-    $mock->mock(_pod2usage => sub { @args = @_} );
+    $mock->mock(usage => sub { @args = @_; });
     my @warn; local $SIG{__WARN__} = sub { @warn = @_ };
     $cmd->_parse_opts(['--dont-do-this']);
     is_deeply \@warn, ["Unknown option: dont-do-this\n"],

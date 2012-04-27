@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 32;
+use Test::More tests => 33;
 #use Test::More 'no_plan';
 use Test::MockModule;
 use Path::Class;
@@ -18,6 +18,7 @@ can_ok $CLASS, qw(
     new
     plan_file
     engine
+    _engine
     client
     db_name
     username
@@ -37,16 +38,17 @@ can_ok $CLASS, qw(
 isa_ok my $sqitch = $CLASS->new, $CLASS, 'A new object';
 
 for my $attr (qw(
+    _engine
     engine
     client
+    username
+    db_name
     host
     port
 )) {
     is $sqitch->$attr, undef, "$attr should be undef";
 }
 
-is $sqitch->username, $ENV{USER}, 'Default user should be $ENV{USER}';
-is $sqitch->db_name, $sqitch->username, 'Default DB should be same as user';
 is $sqitch->plan_file, file('sqitch.plan'), 'Default plan file should be sqitch.plan';
 is $sqitch->verbosity, 1, 'verbosity should be 1';
 is $sqitch->dry_run, 0, 'dry_run should be 0';
@@ -72,7 +74,9 @@ GO: {
     is_deeply \@params, ['config'], 'Extra args should be passed to execute';
 
     isa_ok my $sqitch = $cmd->sqitch, 'App::Sqitch';
-    is $sqitch->engine, 'sqlite', 'Engine should be set by option';
+    is $sqitch->_engine, 'sqlite', 'Engine should be set by option';
+    # isa $sqitch->engine, 'App::Sqitch::Engine::sqlite',
+    #     'Engine object should be constructable';
     is $sqitch->db_name, 'widgetopolis', 'db_name should be set by config';
     is $sqitch->extension, 'ddl', 'ddl should be set by config';
     ok my $config = $sqitch->config, 'Get the Sqitch config';

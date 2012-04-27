@@ -1,6 +1,6 @@
 package App::Sqitch;
 
-use v5.10;
+use v5.10.1;
 use strict;
 use warnings;
 use utf8;
@@ -14,31 +14,26 @@ use Moose;
 use Moose::Util::TypeConstraints;
 use namespace::autoclean;
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 has plan_file => (is => 'ro', required => 1, default => sub {
     file 'sqitch.plan';
 });
 
-has engine => (is => 'ro', isa => enum [qw(pg mysql sqlite)]);
-
-has client => (is => 'ro', isa => 'Str');
-
-has db_name => (is => 'ro', isa => 'Str', required => 1, lazy => 1, default => sub {
-    $ENV{SQITCH_DBNAME} // shift->username
+has _engine => (is => 'ro', isa => enum [qw(pg mysql sqlite)]);
+has engine => (is => 'ro', isa => 'Maybe[App::Sqitch::Engine]', lazy => 1, default => sub {
+    my $self = shift;
+    my $name = $self->_engine or return;
+    require App::Sqitch::Engine;
+    App::Sqitch::Engine->load({sqitch => $self, engine => $name});
 });
 
-has username => (is => 'ro', isa => 'Str', required => 1, lazy => 1, default => sub {
-   $ENV{SQITCH_USER} // $ENV{USER}
-});
-
-has host => (is => 'ro', isa => 'Maybe[Str]', lazy => 1, default => sub {
-    $ENV{SQITCH_HOST};
-});
-
-has port => (is => 'ro', isa => 'Maybe[Int]', lazy => 1, default => sub {
-    $ENV{SQITCH_PORT};
-});
+# Attributes useful to engines; no defaults.
+has client   => (is => 'ro', isa => 'Str');
+has db_name  => (is => 'ro', isa => 'Str');
+has username => (is => 'ro', isa => 'Str');
+has host     => (is => 'ro', isa => 'Str');
+has port     => (is => 'ro', isa => 'Int');
 
 has sql_dir => (is => 'ro', required => 1, lazy => 1, default => sub { dir 'sql' });
 
@@ -83,9 +78,9 @@ sub go {
     my $config = App::Sqitch::Config->new;
 
     # 4. Instantiate Sqitch.
-    my $sqitch = $class->new(
-        merge $core_opts, $config->get_section(section => 'core')
-    );
+    my $params = merge $core_opts, $config->get_section(section => 'core');
+    $params->{_engine} = delete $params->{engine} if $params->{engine};
+    my $sqitch = $class->new($params);
     $sqitch->{config} = $config;
 
     # 5. Instantiate the command object.

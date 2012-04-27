@@ -1,6 +1,6 @@
 package App::Sqitch::Command::config;
 
-use v5.10;
+use v5.10.1;
 use strict;
 use warnings;
 use utf8;
@@ -12,7 +12,7 @@ use Moose::Util::TypeConstraints;
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 has file => (is => 'ro', lazy => 1, default => sub {
     my $self = shift;

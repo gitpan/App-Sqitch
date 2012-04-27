@@ -1,6 +1,6 @@
 package App::Sqitch::Command;
 
-use v5.10;
+use v5.10.1;
 use strict;
 use warnings;
 use utf8;
@@ -80,7 +80,7 @@ sub _parse_opts {
     my %opts;
     Getopt::Long::Configure(qw(bundling no_pass_through));
     Getopt::Long::GetOptionsFromArray($args, \%opts, $class->options)
-        or $class->_pod2usage;
+        or $class->usage;
 
     return \%opts;
 }
