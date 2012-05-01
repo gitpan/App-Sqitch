@@ -1,8 +1,12 @@
 bin/sqitch
 Build.PL
 Changes
+etc/templates/deploy.tmpl
+etc/templates/revert.tmpl
+etc/templates/test.tmpl
 lib/App/Sqitch.pm
 lib/App/Sqitch/Command.pm
+lib/App/Sqitch/Command/add_step.pm
 lib/App/Sqitch/Command/config.pm
 lib/App/Sqitch/Command/help.pm
 lib/App/Sqitch/Command/init.pm
@@ -11,6 +15,8 @@ lib/App/Sqitch/Engine.pm
 lib/App/Sqitch/Engine/pg.pm
 lib/App/Sqitch/Engine/sqlite.pm
 lib/App/Sqitch/Plan.pm
+lib/sqitch-add-step-usage.pod
+lib/sqitch-add-step.pod
 lib/sqitch-config-usage.pod
 lib/sqitch-config.pod
 lib/sqitch-help-usage.pod
@@ -22,7 +28,10 @@ lib/sqitchtutorial.pod
 MANIFEST			This list of files
 META.json
 META.yml
+priv/Module/Build/Sqitch.pm
 README.md
+t/add_step.conf
+t/add_step.t
 t/base.t
 t/command.t
 t/config.t
@@ -37,6 +46,7 @@ t/lib/App/Sqitch/Command/good.pm
 t/lib/App/Sqitch/Engine/bad.pm
 t/lib/App/Sqitch/Engine/good.pm
 t/lib/MockCommand.pm
+t/local.conf
 t/options.t
 t/pg.t
 t/plan.t

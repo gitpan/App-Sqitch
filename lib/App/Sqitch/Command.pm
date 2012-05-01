@@ -9,13 +9,33 @@ use Try::Tiny;
 use Hash::Merge 'merge';
 use Moose;
 
-has sqitch => (is => 'ro', isa => 'App::Sqitch', required => 1);
+our $VERSION = '0.20';
+
+has sqitch => (
+    is       => 'ro',
+    isa      => 'App::Sqitch',
+    required => 1,
+    handles  => [qw(
+        verbosity
+        trace
+        debug
+        info
+        comment
+        emit
+        warn
+        unfound
+        fail
+        help
+        bail
+    )],
+);
 
 sub command {
     my $class = ref $_[0] || shift;
     return '' if $class eq __PACKAGE__;
     my $pkg = quotemeta __PACKAGE__;
     $class =~ s/^$pkg\:://;
+    $class =~ s/_/-/g;
     return $class;
 }
 
@@ -24,9 +44,10 @@ sub load {
 
     # We should have a command.
     $class->usage unless $p->{command};
+    (my $cmd = $p->{command}) =~ s/-/_/g;
 
     # Load the command class.
-    my $pkg = __PACKAGE__ . "::$p->{command}";
+    my $pkg = __PACKAGE__ . "::$cmd";
     try {
         eval "require $pkg" or die $@;
     } catch {
@@ -34,9 +55,7 @@ sub load {
         die $_ unless /^Can't locate/;
 
         # Suggest help if it's not a valid command.
-        __PACKAGE__->new({ sqitch => $p->{sqitch} })->help(
-            qq{"$p->{command}" is not a valid command.}
-        );
+        $p->{sqitch}->help(qq{"$cmd" is not a valid command.});
     };
 
     # Merge the command-line options and configuration parameters
@@ -63,10 +82,6 @@ sub configure {
         $options,
         $config->get_section(section => $class->command),
     );
-}
-
-sub verbosity {
-    shift->sqitch->verbosity;
 }
 
 sub options {
@@ -111,13 +126,6 @@ sub _pod2usage {
     );
 }
 
-sub _prepend {
-    my $prefix = shift;
-    my $msg = join '', map { $_  // '' } @_;
-    $msg =~ s/^/$prefix /gms;
-    return $msg;
-}
-
 sub execute {
     my $self = shift;
     croak(
@@ -143,53 +151,6 @@ sub do_system {
     return !$status;
 }
 
-sub trace {
-    my $self = shift;
-    say _prepend 'trace:', @_ if $self->verbosity > 2
-}
-
-sub debug {
-    my $self = shift;
-    say _prepend 'debug:', @_ if $self->verbosity > 1
-}
-
-sub info {
-    my $self = shift;
-    say @_ if $self->verbosity;
-}
-
-sub comment {
-    my $self = shift;
-    say _prepend '#', @_ if $self->verbosity;
-}
-
-sub emit {
-    shift;
-    say @_;
-}
-
-sub warn {
-    my $self = shift;
-    say STDERR _prepend 'warning:', @_;
-}
-
-sub unfound {
-    exit 1;
-}
-
-sub fail {
-    my $self = shift;
-    say STDERR _prepend 'fatal:', @_;
-    exit 2;
-}
-
-sub help {
-    my $self = shift;
-    my $bn = _bn;
-    say STDERR _prepend("$bn:", @_), " See $bn --help";
-    exit 1;
-}
-
 sub usage {
     my $self = shift;
     require Pod::Find;
@@ -198,18 +159,6 @@ sub usage {
         '-input' => Pod::Find::pod_where({'-inc' => 1 }, $upod) || undef,
         '-message' => join '', @_
     );
-}
-
-sub bail {
-    my ($self, $code) = (shift, shift);
-    if (@_) {
-        if ($code) {
-            say STDERR @_;
-        } else {
-            say STDOUT @_;
-        }
-    }
-    exit $code;
 }
 
 __PACKAGE__->meta->make_immutable;
@@ -368,10 +317,8 @@ Returns the verbosity level.
 
 =head3 C<trace>
 
-  $cmd->trace('About to fuzzle the wuzzle.');
-
 Send trace information to C<STDOUT> if the verbosity level is 3 or higher.
-Trace messages will have C<TRACE: > prefixed to every line. If it's lower than
+Trace messages will have C<trace: > prefixed to every line. If it's lower than
 3, nothing will be output.
 
 =head3 C<debug>
@@ -379,7 +326,7 @@ Trace messages will have C<TRACE: > prefixed to every line. If it's lower than
   $cmd->debug('Found snuggle in the crib.');
 
 Send debug information to C<STDOUT> if the verbosity level is 2 or higher.
-Debug messages will have C<DEBUG: > prefixed to every line. If it's lower than
+Debug messages will have C<debug: > prefixed to every line. If it's lower than
 2, nothing will be output.
 
 =head3 C<info>
@@ -410,8 +357,9 @@ C<sqitch config --get core.editor>.
 
   $cmd->warn('Could not find nerble; using nobble instead.');
 
-Send a warning messages to C<STDERR>. Use if something unexpected happened but
-you can recover from it.
+Send a warning messages to C<STDERR>. Warnings will have C<warning: > prefixed
+to every line. Use if something unexpected happened but you can recover from
+it.
 
 =head3 C<unfound>
 
@@ -424,8 +372,9 @@ such as when something requested was not found.
 
   $cmd->fail('File or directory "foo" not found.');
 
-Send a failure message to C<STDERR> and exit with status code 2. Use if
-something unexpected happened and you cannot recover from it.
+Send a failure message to C<STDERR> and exit with status code 2. Failures will
+have C<fatal: > prefixed to every line. Use if something unexpected happened
+and you cannot recover from it.
 
 =head3 C<usage>
 
@@ -433,14 +382,33 @@ something unexpected happened and you cannot recover from it.
 
 Sends the specified message to C<STDERR>, followed by the usage sections of
 the command's documentation. Those sections may be named "Name", "Synopsis",
-or "Options". Any or all of those will be shown.
+or "Options". Any or all of these will be shown. The doc used to display them
+will be the first found of:
+
+=over
+
+=item C<sqitch-$command-usage>
+
+=item C<sqitch-$command>
+
+=item C<sqitch>
+
+=item C<App::Sqitch::Command::$command>
+
+=item C<App::Sqitch::Command>
+
+=back
+
+For an ideal usage messages, C<sqitch-$command-usage.pod> should be created by
+all command subclasses.
 
 =head3 C<help>
 
   $cmd->help('"foo" is not a valid command.');
 
 Sends messages to C<STDERR> and exists with an additional message to "See
-sqitch --help". Use if the user has misused the app.
+sqitch --help". Help messages will have C<sqitch: > prefixed to every line.
+Use if the user has misused the app.
 
 =head3 C<bail>
 

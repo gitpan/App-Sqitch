@@ -14,13 +14,15 @@ use Moose;
 use Moose::Util::TypeConstraints;
 use namespace::autoclean;
 
-our $VERSION = '0.11';
+our $VERSION = '0.20';
 
 has plan_file => (is => 'ro', required => 1, default => sub {
     file 'sqitch.plan';
 });
 
-has _engine => (is => 'ro', isa => enum [qw(pg mysql sqlite)]);
+has _engine => (is => 'ro', lazy => 1, isa => maybe_type(enum [qw(pg mysql sqlite)]), default => sub {
+    shift->config->get(key => 'core.engine');
+});
 has engine => (is => 'ro', isa => 'Maybe[App::Sqitch::Engine]', lazy => 1, default => sub {
     my $self = shift;
     my $name = $self->_engine or return;
@@ -35,34 +37,53 @@ has username => (is => 'ro', isa => 'Str');
 has host     => (is => 'ro', isa => 'Str');
 has port     => (is => 'ro', isa => 'Int');
 
-has sql_dir => (is => 'ro', required => 1, lazy => 1, default => sub { dir 'sql' });
+has sql_dir => (is => 'ro', required => 1, lazy => 1, default => sub {
+    dir shift->config->get(key => 'core.sql_dir') || 'sql';
+});
 
 has deploy_dir => (is => 'ro', required => 1, lazy => 1, default => sub {
-    shift->sql_dir->subdir('deploy');
+    my $self = shift;
+    if (my $dir = $self->config->get(key => 'core.deploy_dir')) {
+        return dir $dir;
+    }
+    $self->sql_dir->subdir('deploy');
 });
 
 has revert_dir => (is => 'ro', required => 1, lazy => 1, default => sub {
-    shift->sql_dir->subdir('revert');
+    my $self = shift;
+    if (my $dir = $self->config->get(key => 'core.revert_dir')) {
+        return dir $dir;
+    }
+    $self->sql_dir->subdir('revert');
 });
 
 has test_dir => (is => 'ro', required => 1, lazy => 1, default => sub {
-    shift->sql_dir->subdir('test');
+    my $self = shift;
+    if (my $dir = $self->config->get(key => 'core.test_dir')) {
+        return dir $dir;
+    }
+    $self->sql_dir->subdir('test');
 });
 
-has extension => (is => 'ro', isa => 'Str', default => 'sql');
+has extension => (is => 'ro', isa => 'Str', lazy => 1, default => sub {
+    shift->config->get(key => 'core.extension') || 'sql';
+});
 
 has dry_run => (is => 'ro', isa => 'Bool', required => 1, default => 0);
 
-has verbosity => (is => 'ro', required => 1, default => 1);
+has verbosity => (is => 'ro', required => 1, lazy => 1, default => sub {
+    shift->config->get(key => 'core.verbosity') // 1;
+});
 
 has config => (is => 'ro', isa => 'App::Sqitch::Config', lazy => 1, default => sub {
     App::Sqitch::Config->new
 });
 
 has editor => (is => 'ro', lazy => 1, default => sub {
-    return $ENV{SQITCH_EDITOR} || $ENV{EDITOR} || (
-        $^O eq 'MSWin32' ? 'notepad.exe' : 'vi'
-    );
+    return $ENV{SQITCH_EDITOR} || $ENV{EDITOR}
+        || shift->config->get(key => 'core.editor')
+        || ($^O eq 'MSWin32' ? 'notepad.exe' : 'vi')
+    ;
 });
 
 sub go {
@@ -72,16 +93,15 @@ sub go {
     my ($core_args, $cmd, $cmd_args) = $class->_split_args(@ARGV);
 
     # 2. Parse core options.
-    my $core_opts = $class->_parse_core_opts($core_args);
+    my $opts = $class->_parse_core_opts($core_args);
 
     # 3. Load config.
     my $config = App::Sqitch::Config->new;
 
     # 4. Instantiate Sqitch.
-    my $params = merge $core_opts, $config->get_section(section => 'core');
-    $params->{_engine} = delete $params->{engine} if $params->{engine};
-    my $sqitch = $class->new($params);
-    $sqitch->{config} = $config;
+    $opts->{_engine} = delete $opts->{engine} if $opts->{engine};
+    $opts->{config} = $config;
+    my $sqitch = $class->new($opts);
 
     # 5. Instantiate the command object.
     my $command = App::Sqitch::Command->load({
@@ -110,6 +130,7 @@ sub _core_opts {
         test-dir=s
         extension=s
         dry-run
+        etc-path
         quiet
         verbose+
         help
@@ -161,6 +182,12 @@ sub _parse_core_opts {
         exit;
     }
 
+    # Handle --etc-path.
+    if ($opts{etc_path}) {
+        say App::Sqitch::Config->system_dir;
+        exit;
+    }
+
     # Normalize the options (remove undefs) and return.
     $opts{verbosity} = delete $opts{verbose};
     delete $opts{$_} for grep { !defined $opts{$_} } keys %opts;
@@ -177,6 +204,78 @@ sub _pod2usage {
         @_
     );
 }
+
+sub _bn {
+    require File::Basename;
+    File::Basename::basename($0);
+}
+
+sub _prepend {
+    my $prefix = shift;
+    my $msg = join '', map { $_  // '' } @_;
+    $msg =~ s/^/$prefix /gms;
+    return $msg;
+}
+
+sub trace {
+    my $self = shift;
+    say _prepend 'trace:', @_ if $self->verbosity > 2
+}
+
+sub debug {
+    my $self = shift;
+    say _prepend 'debug:', @_ if $self->verbosity > 1
+}
+
+sub info {
+    my $self = shift;
+    say @_ if $self->verbosity;
+}
+
+sub comment {
+    my $self = shift;
+    say _prepend '#', @_ if $self->verbosity;
+}
+
+sub emit {
+    shift;
+    say @_;
+}
+
+sub warn {
+    my $self = shift;
+    say STDERR _prepend 'warning:', @_;
+}
+
+sub unfound {
+    exit 1;
+}
+
+sub fail {
+    my $self = shift;
+    say STDERR _prepend 'fatal:', @_;
+    exit 2;
+}
+
+sub help {
+    my $self = shift;
+    my $bn = _bn;
+    say STDERR _prepend("$bn:", @_), " See $bn --help";
+    exit 1;
+}
+
+sub bail {
+    my ($self, $code) = (shift, shift);
+    if (@_) {
+        if ($code) {
+            say STDERR @_;
+        } else {
+            say STDOUT @_;
+        }
+    }
+    exit $code;
+}
+
 
 __PACKAGE__->meta->make_immutable;
 no Moose;
@@ -292,6 +391,86 @@ Returns the full configuration, combined from the project, user, and system
 configuration files.
 
 =head3 C<verbosity>
+
+=head2 Instance Methods
+
+=head3 C<trace>
+
+  $sqitch->trace('About to fuzzle the wuzzle.');
+
+Send trace information to C<STDOUT> if the verbosity level is 3 or higher.
+Trace messages will have C<trace: > prefixed to every line. If it's lower than
+3, nothing will be output.
+
+=head3 C<debug>
+
+  $sqitch->debug('Found snuggle in the crib.');
+
+Send debug information to C<STDOUT> if the verbosity level is 2 or higher.
+Debug messages will have C<debug: > prefixed to every line. If it's lower than
+2, nothing will be output.
+
+=head3 C<info>
+
+  $sqitch->info('Nothing to deploy (up-to-date)');
+
+Send informational message to C<STDOUT> if the verbosity level is 1 or higher,
+which, by default, it is. Should be used for normal messages the user would
+normally want to see. If verbosity is lower than 1, nothing will be output.
+
+=head3 C<comment>
+
+  $sqitch->comment('On database flipr_test');
+
+Send comments to C<STDOUT> if the verbosity level is 1 or higher, which, by
+default, it is. Comments have C<# > prefixed to every line. If verbosity is
+lower than 1, nothing will be output.
+
+=head3 C<emit>
+
+  $sqitch->emit('core.editor=emacs');
+
+Send a message to C<STDOUT>, without regard to the verbosity. Should be used
+only if the user explicitly asks for output, such as for
+C<sqitch config --get core.editor>.
+
+=head3 C<warn>
+
+  $sqitch->warn('Could not find nerble; using nobble instead.');
+
+Send a warning messages to C<STDERR>. Warnings will have C<warning: > prefixed
+to every line. Use if something unexpected happened but you can recover from
+it.
+
+=head3 C<unfound>
+
+  $sqitch->unfound;
+
+Exit the program with status code 1. Best for use for non-fatal errors,
+such as when something requested was not found.
+
+=head3 C<fail>
+
+  $sqitch->fail('File or directory "foo" not found.');
+
+Send a failure message to C<STDERR> and exit with status code 2. Failures will
+have C<fatal: > prefixed to every line. Use if something unexpected happened
+and you cannot recover from it.
+
+=head3 C<help>
+
+  $sqitch->help('"foo" is not a valid command.');
+
+Sends messages to C<STDERR> and exists with an additional message to "See
+sqitch --help". Help messages will have C<sqitch: > prefixed to every line.
+Use if the user has misused the app.
+
+=head3 C<bail>
+
+  $sqitch->bail(3, 'The config file is invalid');
+
+Exits with the specified error code, sending any specified messages to
+C<STDOUT> if the exit code is 0, and to C<STDERR> if it is not 0.
 
 =head1 Author
 

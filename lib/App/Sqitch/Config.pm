@@ -4,43 +4,55 @@ use v5.10.1;
 use Moose;
 use strict;
 use warnings;
-use Config;
 use Path::Class;
 use Carp;
 use utf8;
 
 extends 'Config::GitLike';
 
-our $VERSION = '0.11';
+our $VERSION = '0.20';
 
 has '+confname' => (
     default => 'sqitch.conf',
 );
 
-sub system_file {
-    return $ENV{SQITCH_SYSTEM_CONFIG} || file(
-        $Config{prefix}, 'etc', shift->confname
+my $SYSTEM_DIR = undef;
+
+sub user_dir {
+    require File::HomeDir;
+    my $hd = File::HomeDir->my_home or croak(
+        "Could not determine home directory"
     );
+    return dir $hd, '.sqitch';
+}
+
+sub system_dir {
+    dir $SYSTEM_DIR || do {
+        require Config;
+        $Config::Config{prefix}, 'etc', 'sqitch';
+    };
+}
+
+sub system_file {
+    my $self = shift;
+    return file $ENV{SQITCH_SYSTEM_CONFIG}
+        || $self->system_dir->file($self->confname);
 }
 
 sub global_file { shift->system_file }
 
 sub user_file {
-    return $ENV{SQITCH_USER_CONFIG} if $ENV{SQITCH_USER_CONFIG};
-
-    require File::HomeDir;
-    my $hd = File::HomeDir->my_home or croak(
-        "Could not determine home directory"
-    );
-    return file $hd, '.sqitch', shift->confname;
+    my $self = shift;
+    return file $ENV{SQITCH_USER_CONFIG}
+        || $self->user_dir->file($self->confname);
 }
 
-sub project_file {
-    return $ENV{SQITCH_CONFIG} if $ENV{SQITCH_CONFIG};
+sub local_file {
+    return file $ENV{SQITCH_CONFIG} if $ENV{SQITCH_CONFIG};
     return file +File::Spec->curdir, shift->confname;
 }
 
-sub dir_file { shift->project_file }
+sub dir_file { shift->local_file }
 
 sub get_section {
     my ($self, %p) = @_;
@@ -51,6 +63,33 @@ sub get_section {
         map  { $_ => $data->{"$section.$_"} }
         grep { s{^\Q$section.\E([^.]+)$}{$1} } keys %{ $data }
     };
+}
+
+# Remove once https://github.com/bestpractical/config-gitlike/pull/4 is merged
+# and released.
+sub add_comment {
+    my $self = shift;
+    my (%args) = (
+        comment     => undef,
+        filename    => undef,
+        indented    => undef,
+        semicolon   => undef,
+        @_
+    );
+
+    my $filename = $args{filename} or die "No filename passed to add_comment()";
+    die "No comment to add\n" unless defined $args{comment};
+
+    # Comment, preserving leading whitespace.
+    my $chars = $args{indented} ? '[[:blank:]]*' : '';
+    my $char  = $args{semicolon} ? ';' : '#';
+    (my $comment = $args{comment}) =~ s/^($chars)/$1$char /mg;
+    $comment .= "\n" if $comment !~ /\n\z/;
+
+    my $c = $self->_read_config($filename);
+    $c = '' unless defined $c;
+
+    return $self->_write_config( $filename, $c . $comment );
 }
 
 __PACKAGE__->meta->make_immutable;
@@ -79,11 +118,20 @@ module.
 
 Returns the configuration file base name, which is F<sqitch.conf>.
 
+=head3 C<system_dir>
+
+Returns the path to the system configuration directory, which is
+C<$Config{prefix}/etc/sqitch/>.
+
+=head3 C<user_dir>
+
+Returns the path to the user configuration directory, which is F<~/.sqitch/>.
+
 =head3 C<system_file>
 
 Returns the path to the system configuration file. The value returned will be
 the contents of the C<$SQITCH_SYSTEM_CONFIG> environment variable, if it's
-defined, or else C<$Config{prefix}/etc/sqitch.conf>.
+defined, or else C<$Config{prefix}/etc/sqitch/sqitch.conf>.
 
 =head3 C<global_file>
 
@@ -95,15 +143,15 @@ Returns the path to the user configuration file. The value returned will be
 the contents of the C<$SQITCH_USER_CONFIG> environment variable, if it's
 defined, or else C<~/.sqitch/sqitch.conf>.
 
-=head3 C<project_file>
+=head3 C<local_file>
 
-Returns the path to the project configuration file, which is just
+Returns the path to the local configuration file, which is just
 F<./sqitch.conf>, unless C<$SQITCH_CONFIG> is set, in which case its value
 will be returned.
 
 =head3 C<dir_file>
 
-An alias for C<project_file()> for use by the parent class.
+An alias for C<local_file()> for use by the parent class.
 
 =head3 C<get_section>
 
@@ -112,6 +160,10 @@ An alias for C<project_file()> for use by the parent class.
 
 Returns a hash reference containing only the keys within the specified
 section or subsection.
+
+=head3 C<add_comment>
+
+Adds a comment to the configuration file.
 
 =head1 See Also
 

@@ -12,7 +12,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.11';
+our $VERSION = '0.20';
 
 sub execute {
     my $self = shift;
@@ -41,12 +41,25 @@ sub write_config {
     my $sqitch = $self->sqitch;
     my $meta   = $sqitch->meta;
     my $config = $sqitch->config;
-    my $file   = $config->project_file;
+    my $file   = $config->local_file;
     if (-f $file) {
         # Do nothing? Update config?
         return $self;
     }
 
+    my (@vars, @comments);
+    # start with the engine.
+    my $engine = $sqitch->engine;
+    if ($engine) {
+        push @vars => {
+            key      => "core.engine",
+            value    => $engine->name,
+        };
+    } else {
+        push @comments => "\tengine = ";
+    }
+
+    # Add in the other stuff.
     for my $name (qw(
         plan_file
         sql_dir
@@ -60,25 +73,39 @@ sub write_config {
         my $attr = $meta->find_attribute_by_name($name)
             or die "Cannot find App::Sqitch attribute $name";
         my $val = $attr->get_value($sqitch);
+        my $def = $attr->default($sqitch);
+        my $var = $config->get(key => "core.$name");
+
         no warnings 'uninitialized';
-        $config->set(
-            key      => "core.$name",
-            value    => $val,
-            filename => $file,
-        ) if $val ne $attr->default($sqitch)
-          && $val ne $config->get(key => "core.$name");
+        if ($val ne $def && $val ne $var) {
+            # It was specified on the command-line, so grab it to write out.
+            push @vars => {
+                key      => "core.$name",
+                value    => $val,
+            };
+        } else {
+            $var //= $def // '';
+            push @comments => "\t$name = $var";
+        }
     }
 
-    if (my $engine = $sqitch->engine) {
-        $config->set(
-            key      => "core.engine",
-            value    => $engine->name,
-            filename => $file,
-        );
+    # Emit them.
+    $config->group_set($file => \@vars) if @vars;
 
+    # Emit the comments.
+    $config->add_comment(
+        filename => $file,
+        indented => 1,
+        comment  => join "\n" => @comments,
+    ) if @comments;
+
+    if ($engine) {
         # Write out the core.$engine section.
         my $ekey = 'core.' . $engine->name;
         my %config_vars = $engine->config_vars;
+        my $emeta       = $engine->meta;
+        @comments = @vars = ();
+
         while (my ($key, $type) = each %config_vars) {
             # Was it passed as an option?
             if (my $attr = $meta->find_attribute_by_name($key)) {
@@ -86,16 +113,45 @@ sub write_config {
                     # It was passed as an option, so record that.
                     my $multiple = $type =~ s/[+]$//;
                     $type = undef if $type eq 'any';
-                    $config->set(
+                    push @vars => {
                         key      => "$ekey.$key",
                         value    => $val,
                         as       => $type,
-                        filename => $file,
                         multiple => $multiple,
-                    );
+                    };
+                    # We're good on this one.
+                    next;
                 }
             }
+
+            # No value, but add it as a comment.
+            if (my $attr = $emeta->find_attribute_by_name($key)) {
+                # Add it as a comment, possibly with a default.
+                my $def = $attr->default($engine)
+                    // $config->get(key => "$ekey.$key")
+                    // '';
+                push @comments => "\t$key = $def";
+            } else {
+                # Add it as a comment, with the config, if possible.
+                my $val = $config->get(key => "$ekey.$key") // '';
+                push @comments => "\t$key = $val";
+            }
         }
+
+        if (@vars) {
+            # Emit them.
+            $config->group_set($file => \@vars) if @vars;
+        } else {
+            # Still want the section, emit it as a comment.
+            unshift @comments => '[core "' . $engine->name . '"]';
+        }
+
+        # Emit the comments.
+        $config->add_comment(
+            filename => $file,
+            indented => 1,
+            comment  => join "\n" => @comments,
+        ) if @comments;
     }
 
     $self->info("Created $file");

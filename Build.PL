@@ -1,8 +1,9 @@
 use strict;
 use warnings;
-use Module::Build;
+use lib 'priv';
+use Module::Build::Sqitch;
 
-Module::Build->new(
+Module::Build::Sqitch->new(
     module_name        => 'App::Sqitch',
     release_status     => 'unstable',
     license            => 'mit',
@@ -12,6 +13,7 @@ Module::Build->new(
         'Module::Build'        => '0.35',
         'Test::Dir'            => 0,
         'Test::File'           => 0,
+        'Test::File::Contents' => '0.05',
         'Test::Exception'      => 0,
         'Test::MockModule'     => '0.05',
         'Test::More'           => '0.17',
@@ -34,13 +36,16 @@ Module::Build->new(
         'List::Util'                   => 0,
         'Moose'                        => '1.15',
         'Moose::Util::TypeConstraints' => '1.15',
+        'MooseX::Types::Path::Class'   => '0.05',
         'namespace::autoclean'         => '0.11',
         'Path::Class'                  => 0,
         'Pod::Find'                    => 0,
         'Pod::Usage'                   => 0,
+        'Template::Tiny'               => '0.11',
         'Try::Tiny'                    => 0,
-      },
-    recommends         => {
+    },
+    no_index => { directory => ['priv'] },
+    recommends => {
         'Test::Pod'  => '1.41',
     },
     meta_merge => {
