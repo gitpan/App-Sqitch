@@ -6,23 +6,24 @@ use warnings;
 use utf8;
 use Carp;
 use Pod::Find;
-use parent 'App::Sqitch::Command';
+use Moose;
+extends 'App::Sqitch::Command';
 
-our $VERSION = '0.20';
+our $VERSION = '0.30';
 
 # XXX Add --all at some point, to output a list of all possible commands.
 
 sub execute {
-    my ($self, $command) = @_;
-    my $look_for = 'sqitch' . ($command ? "-$command" : '');
-    my $pod = Pod::Find::pod_where(
-        {'-inc' => 1, '-script' => 1 },
-        $look_for,
-    ) or $self->fail(qq{No manual entry for $look_for\n});
+    my ( $self, $command ) = @_;
+    my $look_for = 'sqitch' . ( $command ? "-$command" : '' );
+    my $pod = Pod::Find::pod_where({
+        '-inc' => 1,
+        '-script' => 1
+    }, $look_for ) or $self->fail(qq{No manual entry for $look_for\n});
     $self->_pod2usage(
-        '-input'    => $pod,
-        '-verbose'  => 2,
-        '-exitval'  => 0,
+        '-input'   => $pod,
+        '-verbose' => 2,
+        '-exitval' => 0,
     );
 }
 
@@ -36,7 +37,7 @@ App::Sqitch::Command::help - Display help information about Sqitch
 
 =head1 Synopsis
 
-  my $cmd = App::Sqitch::Command::help->new(\%params);
+  my $cmd = App::Sqitch::Command::help->new(%params);
   $cmd->execute;
 
 =head1 Description
@@ -48,9 +49,6 @@ works, read on.
 =head1 Interface
 
 =head2 Instance Methods
-
-These methods are mainly provided as utilities for the command subclasses to
-use.
 
 =head3 C<execute>
 

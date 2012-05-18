@@ -11,86 +11,145 @@ use Config;
 use App::Sqitch::Config;
 use App::Sqitch::Command;
 use Moose;
+use List::Util qw(first);
+use IPC::System::Simple qw(runx capturex $EXITVAL);
 use Moose::Util::TypeConstraints;
+use MooseX::Types::Path::Class;
 use namespace::autoclean;
 
-our $VERSION = '0.20';
+our $VERSION = '0.30';
 
-has plan_file => (is => 'ro', required => 1, default => sub {
-    file 'sqitch.plan';
-});
+has plan_file => (
+    is       => 'ro',
+    required => 1,
+    default  => sub {
+        file 'sqitch.plan';
+    }
+);
 
-has _engine => (is => 'ro', lazy => 1, isa => maybe_type(enum [qw(pg mysql sqlite)]), default => sub {
-    shift->config->get(key => 'core.engine');
-});
-has engine => (is => 'ro', isa => 'Maybe[App::Sqitch::Engine]', lazy => 1, default => sub {
-    my $self = shift;
-    my $name = $self->_engine or return;
-    require App::Sqitch::Engine;
-    App::Sqitch::Engine->load({sqitch => $self, engine => $name});
-});
+has _engine => (
+    is      => 'ro',
+    lazy    => 1,
+    isa     => maybe_type( enum [qw(pg mysql sqlite)] ),
+    default => sub {
+        shift->config->get( key => 'core.engine' );
+    }
+);
+has engine => (
+    is      => 'ro',
+    isa     => 'Maybe[App::Sqitch::Engine]',
+    lazy    => 1,
+    default => sub {
+        my $self = shift;
+        my $name = $self->_engine or return;
+        require App::Sqitch::Engine;
+        App::Sqitch::Engine->load({ sqitch => $self, engine => $name });
+    }
+);
 
 # Attributes useful to engines; no defaults.
-has client   => (is => 'ro', isa => 'Str');
-has db_name  => (is => 'ro', isa => 'Str');
-has username => (is => 'ro', isa => 'Str');
-has host     => (is => 'ro', isa => 'Str');
-has port     => (is => 'ro', isa => 'Int');
+has client   => ( is => 'ro', isa => 'Str' );
+has db_name  => ( is => 'ro', isa => 'Str' );
+has username => ( is => 'ro', isa => 'Str' );
+has host     => ( is => 'ro', isa => 'Str' );
+has port     => ( is => 'ro', isa => 'Int' );
 
-has sql_dir => (is => 'ro', required => 1, lazy => 1, default => sub {
-    dir shift->config->get(key => 'core.sql_dir') || 'sql';
-});
+has sql_dir => (
+    is       => 'ro',
+    isa      => 'Maybe[Path::Class::Dir]',
+    required => 1,
+    lazy     => 1,
+    default => sub { dir shift->config->get( key => 'core.sql_dir' ) || 'sql' },
+);
 
-has deploy_dir => (is => 'ro', required => 1, lazy => 1, default => sub {
-    my $self = shift;
-    if (my $dir = $self->config->get(key => 'core.deploy_dir')) {
-        return dir $dir;
+has deploy_dir => (
+    is       => 'ro',
+    isa      => 'Path::Class::Dir',
+    required => 1,
+    lazy     => 1,
+    default  => sub {
+        my $self = shift;
+        if ( my $dir = $self->config->get( key => 'core.deploy_dir' ) ) {
+            return dir $dir;
+        }
+        $self->sql_dir->subdir('deploy');
+    },
+);
+
+has revert_dir => (
+    is       => 'ro',
+    isa      => 'Path::Class::Dir',
+    required => 1,
+    lazy     => 1,
+    default  => sub {
+        my $self = shift;
+        if ( my $dir = $self->config->get( key => 'core.revert_dir' ) ) {
+            return dir $dir;
+        }
+        $self->sql_dir->subdir('revert');
+    },
+);
+
+has test_dir => (
+    is       => 'ro',
+    isa      => 'Path::Class::Dir',
+    required => 1,
+    lazy     => 1,
+    default  => sub {
+        my $self = shift;
+        if ( my $dir = $self->config->get( key => 'core.test_dir' ) ) {
+            return dir $dir;
+        }
+        $self->sql_dir->subdir('test');
+    },
+);
+
+has extension => (
+    is      => 'ro',
+    isa     => 'Str',
+    lazy    => 1,
+    default => sub {
+        shift->config->get( key => 'core.extension' ) || 'sql';
     }
-    $self->sql_dir->subdir('deploy');
-});
+);
 
-has revert_dir => (is => 'ro', required => 1, lazy => 1, default => sub {
-    my $self = shift;
-    if (my $dir = $self->config->get(key => 'core.revert_dir')) {
-        return dir $dir;
+has dry_run => ( is => 'ro', isa => 'Bool', required => 1, default => 0 );
+
+has verbosity => (
+    is       => 'ro',
+    required => 1,
+    lazy     => 1,
+    default  => sub {
+        shift->config->get( key => 'core.verbosity' ) // 1;
     }
-    $self->sql_dir->subdir('revert');
-});
+);
 
-has test_dir => (is => 'ro', required => 1, lazy => 1, default => sub {
-    my $self = shift;
-    if (my $dir = $self->config->get(key => 'core.test_dir')) {
-        return dir $dir;
+has config => (
+    is      => 'ro',
+    isa     => 'App::Sqitch::Config',
+    lazy    => 1,
+    default => sub {
+        App::Sqitch::Config->new;
     }
-    $self->sql_dir->subdir('test');
-});
+);
 
-has extension => (is => 'ro', isa => 'Str', lazy => 1, default => sub {
-    shift->config->get(key => 'core.extension') || 'sql';
-});
-
-has dry_run => (is => 'ro', isa => 'Bool', required => 1, default => 0);
-
-has verbosity => (is => 'ro', required => 1, lazy => 1, default => sub {
-    shift->config->get(key => 'core.verbosity') // 1;
-});
-
-has config => (is => 'ro', isa => 'App::Sqitch::Config', lazy => 1, default => sub {
-    App::Sqitch::Config->new
-});
-
-has editor => (is => 'ro', lazy => 1, default => sub {
-    return $ENV{SQITCH_EDITOR} || $ENV{EDITOR}
-        || shift->config->get(key => 'core.editor')
-        || ($^O eq 'MSWin32' ? 'notepad.exe' : 'vi')
-    ;
-});
+has editor => (
+    is      => 'ro',
+    lazy    => 1,
+    default => sub {
+        return
+             $ENV{SQITCH_EDITOR}
+          || $ENV{EDITOR}
+          || shift->config->get( key => 'core.editor' )
+          || ( $^O eq 'MSWin32' ? 'notepad.exe' : 'vi' );
+    }
+);
 
 sub go {
     my $class = shift;
 
     # 1. Split command and options.
-    my ($core_args, $cmd, $cmd_args) = $class->_split_args(@ARGV);
+    my ( $core_args, $cmd, $cmd_args ) = $class->_split_args(@ARGV);
 
     # 2. Parse core options.
     my $opts = $class->_parse_core_opts($core_args);
@@ -112,7 +171,7 @@ sub go {
     });
 
     # 6. Execute command.
-    return $command->execute(@{ $cmd_args }) ? 0 : 2;
+    return $command->execute( @{$cmd_args} ) ? 0 : 2;
 }
 
 sub _core_opts {
@@ -140,7 +199,7 @@ sub _core_opts {
 }
 
 sub _split_args {
-    my ($self, @args) = @_;
+    my ( $self, @args ) = @_;
 
     my $cmd_at  = 0;
     my $add_one = sub { $cmd_at++ };
@@ -156,26 +215,29 @@ sub _split_args {
     ) or $self->_pod2usage;
 
     # Splice the command and its options out of the arguments.
-    my ($cmd, @cmd_opts) = splice @args, $cmd_at;
+    my ( $cmd, @cmd_opts ) = splice @args, $cmd_at;
     return \@args, $cmd, \@cmd_opts;
 }
 
 sub _parse_core_opts {
-    my ($self, $args) = @_;
+    my ( $self, $args ) = @_;
     my %opts;
     Getopt::Long::Configure(qw(bundling pass_through));
-    Getopt::Long::GetOptionsFromArray($args, map {
-        (my $k = $_) =~ s/[|=+:!].*//;
-        $k =~ s/-/_/g;
-        $_ => \$opts{$k};
-    } $self->_core_opts) or $self->_pod2usage;
+    Getopt::Long::GetOptionsFromArray(
+        $args,
+        map {
+            ( my $k = $_ ) =~ s/[|=+:!].*//;
+            $k =~ s/-/_/g;
+            $_ => \$opts{$k};
+        } $self->_core_opts
+    ) or $self->_pod2usage;
 
     # Handle documentation requests.
-    $self->_pod2usage('-exitval' => 0, '-verbose' => 2) if delete $opts{man};
-    $self->_pod2usage('-exitval' => 0                 ) if delete $opts{help};
+    $self->_pod2usage( '-exitval' => 0, '-verbose' => 2 ) if delete $opts{man};
+    $self->_pod2usage( '-exitval' => 0                  ) if delete $opts{help};
 
     # Handle version request.
-    if (delete $opts{version}) {
+    if ( delete $opts{version} ) {
         require File::Basename;
         my $fn = File::Basename::basename($0);
         print $fn, ' (', __PACKAGE__, ') ', __PACKAGE__->VERSION, $/;
@@ -183,10 +245,16 @@ sub _parse_core_opts {
     }
 
     # Handle --etc-path.
-    if ($opts{etc_path}) {
+    if ( $opts{etc_path} ) {
         say App::Sqitch::Config->system_dir;
         exit;
     }
+
+    # Convert files and dirs to objects.
+    for my $dir (qw(sql_dir deploy_dir revert_dir test_dir)) {
+        $opts{$dir} = dir $opts{$dir} if defined $opts{$dir};
+    }
+    $opts{plan_file} = file $opts{plan_file} if defined $opts{plan_file};
 
     # Normalize the options (remove undefs) and return.
     $opts{verbosity} = delete $opts{verbose};
@@ -205,6 +273,43 @@ sub _pod2usage {
     );
 }
 
+sub run {
+    my $self = shift;
+    local $SIG{__DIE__} = sub {
+        ( my $msg = shift ) =~ s/\s+at\s+.+/\n/ms;
+        die $msg;
+    };
+    runx @_;
+    return $self;
+}
+
+sub capture {
+    my $self = shift;
+    local $SIG{__DIE__} = sub {
+        ( my $msg = shift ) =~ s/\s+at\s+.+/\n/ms;
+        die $msg;
+    };
+    capturex @_;
+}
+
+sub spool {
+    my ($self, $fh) = (shift, shift);
+    local $SIG{__WARN__} = sub { }; # Silence warning.
+    open my $pipe, '|-', @_ or die "Cannot exec $_[0]: $!\n";
+    local $SIG{PIPE} = sub { die 'spooler pipe broke' };
+    print $pipe $_ while <$fh>;
+    close $pipe or die $!
+        ? "Error closing pipe to $_[0]: $!\n"
+        : "$_[0] unexpectedly returned exit value " . ($? >> 8) . "\n";
+    return $self;
+}
+
+sub probe {
+    my ($ret) = shift->capture(@_);
+    chomp $ret;
+    return $ret;
+}
+
 sub _bn {
     require File::Basename;
     File::Basename::basename($0);
@@ -212,19 +317,19 @@ sub _bn {
 
 sub _prepend {
     my $prefix = shift;
-    my $msg = join '', map { $_  // '' } @_;
+    my $msg = join '', map { $_ // '' } @_;
     $msg =~ s/^/$prefix /gms;
     return $msg;
 }
 
 sub trace {
     my $self = shift;
-    say _prepend 'trace:', @_ if $self->verbosity > 2
+    say _prepend 'trace:', @_ if $self->verbosity > 2;
 }
 
 sub debug {
     my $self = shift;
-    say _prepend 'debug:', @_ if $self->verbosity > 1
+    say _prepend 'debug:', @_ if $self->verbosity > 1;
 }
 
 sub info {
@@ -240,6 +345,11 @@ sub comment {
 sub emit {
     shift;
     say @_;
+}
+
+sub vent {
+    shift;
+    say STDERR @_;
 }
 
 sub warn {
@@ -259,23 +369,23 @@ sub fail {
 
 sub help {
     my $self = shift;
-    my $bn = _bn;
-    say STDERR _prepend("$bn:", @_), " See $bn --help";
+    my $bn   = _bn;
+    say STDERR _prepend( "$bn:", @_ ), " See $bn --help";
     exit 1;
 }
 
 sub bail {
-    my ($self, $code) = (shift, shift);
+    my ( $self, $code ) = ( shift, shift );
     if (@_) {
         if ($code) {
             say STDERR @_;
-        } else {
+        }
+        else {
             say STDOUT @_;
         }
     }
     exit $code;
 }
-
 
 __PACKAGE__->meta->make_immutable;
 no Moose;
@@ -394,6 +504,34 @@ configuration files.
 
 =head2 Instance Methods
 
+=head3 C<run>
+
+  $sqitch->run('echo hello');
+
+Runs a system command and waits for it to finish. Throws an exception on
+error.
+
+=head3 C<capture>
+
+  my @files = $sqitch->capture(qw(ls -lah));
+
+Runs a system command and captures its output to C<STDOUT>. Returns the output
+lines in list context and the concatenation of the lines in scalar context.
+Throws an exception on error.
+
+=head3 C<probe>
+
+  my $git_version = $sqitch->capture(qw(git --version));
+
+Like C<capture>, but returns just the C<chomp>ed first line of output.
+
+=head3 C<spool>
+
+  $sqitch->spool($sql_file_handle, 'sqlite3', 'my.db');
+
+Like run, but spools the contents of a file handle to the standard input the
+system command. Returns true on success and throws an exception on failure.
+
 =head3 C<trace>
 
   $sqitch->trace('About to fuzzle the wuzzle.');
@@ -434,6 +572,14 @@ Send a message to C<STDOUT>, without regard to the verbosity. Should be used
 only if the user explicitly asks for output, such as for
 C<sqitch config --get core.editor>.
 
+=head3 C<vent>
+
+  $sqitch->vent('core.editor=emacs');
+
+Send a message to C<STDERR>, without regard to the verbosity. Should be used
+only for error messages to be printed before exiting with an error, such as
+when reverting failed changes.
+
 =head3 C<warn>
 
   $sqitch->warn('Could not find nerble; using nobble instead.');
@@ -471,6 +617,17 @@ Use if the user has misused the app.
 
 Exits with the specified error code, sending any specified messages to
 C<STDOUT> if the exit code is 0, and to C<STDERR> if it is not 0.
+
+=head1 To Do
+
+=over
+
+=item *
+
+Add checks to L<sqitch-add-step> to halt if a C<--requires> or C<--conflicts>
+step does not exist.
+
+=back
 
 =head1 Author
 

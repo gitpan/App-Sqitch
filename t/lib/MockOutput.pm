@@ -1,4 +1,4 @@
-package MockCommand;
+package MockOutput;
 
 use v5.10.1;
 use strict;
@@ -6,9 +6,22 @@ use warnings;
 use utf8;
 use Test::MockModule;
 
-our $MOCK = Test::MockModule->new('App::Sqitch::Command');
+our $MOCK = Test::MockModule->new('App::Sqitch');
 
-my @mocked = qw(trace debug info comment emit warn unfound fail help usage bail);
+my @mocked = qw(
+    trace
+    debug
+    info
+    comment
+    emit
+    vent
+    warn
+    unfound
+    fail
+    help
+    usage
+    bail
+);
 
 my %CAPTURED;
 
@@ -19,7 +32,7 @@ for my $meth (@mocked) {
         $MOCK->mock($meth => sub {
             shift;
             push @{ $CAPTURED{$meth} } => [@_];
-            die uc($meth) . ": @_";
+            die uc($meth) . ": " . join '', @_;
         });
     } else {
         $MOCK->mock($meth => sub {
