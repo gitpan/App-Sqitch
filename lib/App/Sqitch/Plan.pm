@@ -10,7 +10,7 @@ use namespace::autoclean;
 use Moose;
 use Moose::Meta::TypeConstraint::Parameterizable;
 
-our $VERSION = '0.30';
+our $VERSION = '0.31';
 
 has sqitch => (
     is       => 'ro',
@@ -261,7 +261,7 @@ sub load_untracked {
     push @{ $tag->_steps } => map { App::Sqitch::Plan::Step->new(
         name => $_,
         tag  => $tag,
-    ) } @steps;
+    ) } sort @steps;
 
     return $tag;
 }

@@ -4,7 +4,7 @@
       "David E. Wheeler <david@justatheory.com>"
    ],
    "dynamic_config" : 1,
-   "generated_by" : "Module::Build version 0.4, CPAN::Meta::Converter version 2.120921",
+   "generated_by" : "Module::Build version 0.3901, CPAN::Meta::Converter version 2.120630",
    "license" : [
       "mit"
    ],
@@ -76,51 +76,51 @@
    "provides" : {
       "App::Sqitch" : {
          "file" : "lib/App/Sqitch.pm",
-         "version" : "0.30"
+         "version" : "0.31"
       },
       "App::Sqitch::Command" : {
          "file" : "lib/App/Sqitch/Command.pm",
-         "version" : "0.30"
+         "version" : "0.31"
       },
       "App::Sqitch::Command::add_step" : {
          "file" : "lib/App/Sqitch/Command/add_step.pm",
-         "version" : "0.30"
+         "version" : "0.31"
       },
       "App::Sqitch::Command::config" : {
          "file" : "lib/App/Sqitch/Command/config.pm",
-         "version" : "0.30"
+         "version" : "0.31"
       },
       "App::Sqitch::Command::deploy" : {
          "file" : "lib/App/Sqitch/Command/deploy.pm",
-         "version" : "0.30"
+         "version" : "0.31"
       },
       "App::Sqitch::Command::help" : {
          "file" : "lib/App/Sqitch/Command/help.pm",
-         "version" : "0.30"
+         "version" : "0.31"
       },
       "App::Sqitch::Command::init" : {
          "file" : "lib/App/Sqitch/Command/init.pm",
-         "version" : "0.30"
+         "version" : "0.31"
       },
       "App::Sqitch::Config" : {
          "file" : "lib/App/Sqitch/Config.pm",
-         "version" : "0.30"
+         "version" : "0.31"
       },
       "App::Sqitch::Engine" : {
          "file" : "lib/App/Sqitch/Engine.pm",
-         "version" : "0.30"
+         "version" : "0.31"
       },
       "App::Sqitch::Engine::pg" : {
          "file" : "lib/App/Sqitch/Engine/pg.pm",
-         "version" : "0.30"
+         "version" : "0.31"
       },
       "App::Sqitch::Engine::sqlite" : {
          "file" : "lib/App/Sqitch/Engine/sqlite.pm",
-         "version" : "0.30"
+         "version" : "0.31"
       },
       "App::Sqitch::Plan" : {
          "file" : "lib/App/Sqitch/Plan.pm",
-         "version" : "0.30"
+         "version" : "0.31"
       },
       "App::Sqitch::Plan::Step" : {
          "file" : "lib/App/Sqitch/Plan/Step.pm",
@@ -138,11 +138,11 @@
       },
       "homepage" : "http://sqitch.org/",
       "license" : [
-         "http://www.opensource.org/licenses/mit-license.php"
+         "http://opensource.org/licenses/mit-license.php"
       ],
       "repository" : {
          "url" : "http://github.com/theory/sqitch/"
       }
    },
-   "version" : "0.30"
+   "version" : "0.31"
 }
