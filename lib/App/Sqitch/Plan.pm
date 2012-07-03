@@ -3,40 +3,32 @@ package App::Sqitch::Plan;
 use v5.10.1;
 use utf8;
 use App::Sqitch::Plan::Tag;
-use App::Sqitch::Plan::Step;
-use Moose::Meta::Attribute::Native;
+use App::Sqitch::Plan::Change;
+use App::Sqitch::Plan::Blank;
+use App::Sqitch::Plan::Pragma;
 use Path::Class;
+use App::Sqitch::Plan::ChangeList;
+use App::Sqitch::Plan::LineList;
 use namespace::autoclean;
 use Moose;
-use Moose::Meta::TypeConstraint::Parameterizable;
+use constant SYNTAX_VERSION => '1.0.0-a1';
 
-our $VERSION = '0.31';
+our $VERSION = '0.50';
 
 has sqitch => (
     is       => 'ro',
     isa      => 'App::Sqitch',
     required => 1,
+    weak_ref => 1,
 );
 
-has with_untracked => (
-    is       => 'ro',
-    isa      => 'Bool',
-    required => 1,
-    default  => 0,
-);
-
-has _all => (
+has _plan => (
     is         => 'ro',
-    isa        => 'ArrayRef[App::Sqitch::Plan::Tag]',
-    traits     => ['Array'],
+    isa        => 'HashRef',
     builder    => 'load',
-    init_arg   => 'all',
+    init_arg   => 'plan',
     lazy       => 1,
     required   => 1,
-    handles    => {
-        all   => 'elements',
-        count => 'count',
-    },
 );
 
 has position => (
@@ -46,247 +38,279 @@ has position => (
     default  => -1,
 );
 
-has _tags => (
-    is       => 'ro',
-    isa      => 'HashRef',
-    required => 1,
-    default  => sub { {} },
-);
-
 sub load {
     my $self = shift;
     my $file = $self->sqitch->plan_file;
-    my $plan = -f $file ? $self->_parse($file) : [];
-    if ( $self->with_untracked ) {
-        push @{ $plan } => $self->load_untracked($plan);
-        $self->_tags->{ $plan->[-1]->name } = $#$plan;
-    }
-    return $plan;
+    # XXX Issue a warning if file does not exist?
+    return {
+        changes => App::Sqitch::Plan::ChangeList->new,
+        lines => App::Sqitch::Plan::LineList->new(
+            $self->_version_line,
+        ),
+    } unless -f $file;
+    my $fh = $file->open('<:encoding(UTF-8)')
+        or $self->sqitch->fail( "Cannot open $file: $!" );
+    return $self->_parse($file, $fh);
 }
 
 sub _parse {
-    my ( $self, $file ) = @_;
-    my $fh = $file->open('<:encoding(UTF-8)')
-        or $self->sqitch->fail( "Cannot open $file: $!" );
+    my ( $self, $file, $fh ) = @_;
 
-    my $tags = $self->_tags;
-    my @plan;          # List of tags to return
-    my $curr_tag;      # Tag object for currently-parsing tag section.
-    my @curr_steps;    # List of steps in currently-parsing tag section.
-    my %seen_tags;     # Maps tags to line numbers.
-    my %prev_steps;    # Maps steps from previous sections to line numbers.
-    my %tag_steps;     # Maps steps in current tag section to line numbers.
+    my @lines;         # List of lines.
+    my @changes;         # List of changes.
+    my @curr_changes;    # List of changes since last tag.
+    my %line_no_for;   # Maps tags and changes to line numbers.
+    my %change_named;    # Maps change names to change objects.
+    my %tag_changes;     # Maps changes in current tag section to line numbers.
+    my $seen_version;  # Have we seen a version pragma?
+    my $prev_tag;      # Last seen tag.
+    my $prev_change;     # Last seen change.
 
     LINE: while ( my $line = $fh->getline ) {
-
-        # Ignore eampty lines and comment-only lines.
-        next LINE if $line =~ /\A\s*(?:#|$)/;
         chomp $line;
 
-        # Remove inline comments
-        $line =~ s/\s*#.*$//g;
-
-        # Handle tag headers
-        if ( my ($names) = $line =~ /^\s*\[\s*(.+?)\s*\]\s*$/ ) {
-            if ($curr_tag) {
-                push @{ $curr_tag->_steps } => $self->sort_steps(
-                    \%prev_steps, @curr_steps
-                );
-                push @plan => $curr_tag;
-
-                $tags->{$_} = $#plan for $curr_tag->names;
-
-                %prev_steps = ( %prev_steps, %tag_steps );
-                @curr_steps = ();
-                %tag_steps  = ();
-            }
-
-            my @curr_tags = split /\s+/ => $names;
-
-            for my $t (@curr_tags) {
-
-                # Fail on invalid tag.
-                $self->sqitch->fail(
-                    "Syntax error in $file at line ",
-                    $fh->input_line_number,
-                    qq{: Invalid tag "$t"; tags must not end in punctuation },
-                    'or a number following punctionation',
-                ) if $t =~ /\p{PosixPunct}\d*\z/;
-
-                # Fail on reserved symbolic tag.
-                $self->sqitch->fail(
-                    "Syntax error in $file at line ",
-                    $fh->input_line_number,
-                    qq{: "HEAD" is a reserved tag name}
-                ) if $t eq 'HEAD';
-
-                # Fail on duplicate tag.
-                $self->sqitch->fail(
-                    "Syntax error in $file at line ",
-                    $fh->input_line_number,
-                    qq{: Tag "$t" duplicates earlier declaration on line },
-                    $seen_tags{$t},
-                ) if $seen_tags{$t};
-
-                # We're good.
-                $seen_tags{$t} = $fh->input_line_number;
-            }
-
-            $curr_tag = App::Sqitch::Plan::Tag->new(
-                names  => \@curr_tags,
-                plan   => $self,
-                sqitch => $self->sqitch,
-            );
-
+        # Grab blank lines first.
+        if ($line =~ /\A(?<lspace>[[:blank:]]*)(?:#(?<comment>.+)|$)/) {
+            my $line = App::Sqitch::Plan::Blank->new( plan => $self, %+ );
+            push @lines => $line;
             next LINE;
         }
 
-        # Push the step into the plan.
-        if ( my ($step) = $line =~ /^\s*(\S+)$/ ) {
+        # Grab inline comment.
+        $line =~ s/(?<rspace>[[:blank:]]*)(?:[#](?<comment>.*))?$//;
+        my %params = %+;
 
-            # Fail if we've seen no tags.
-            $self->sqitch->fail(
-                "Syntax error in $file at line ",
-                $fh->input_line_number,
-                qq{: Step "$step" not associated with a tag}
-            ) unless $curr_tag;
-
-            # Fail on duplicate step.
-            if ( my $line = $tag_steps{$step} || $prev_steps{$step} ) {
-                $self->sqitch->fail(
-                    "Syntax error in $file at line ",
-                    $fh->input_line_number,
-                    qq{: Step "$step" duplicates earlier declaration on line },
-                    $line,
-                );
+        # Grab pragmas.
+        if ($line =~ /
+           \A                             # Beginning of line
+           (?<lspace>[[:blank:]]*)?       # Optional leading space
+           [%]                            # Required %
+           (?<hspace>[[:blank:]]*)?       # Optional space
+           (?<name>                       # followed by name consisting of...
+               [^[:punct:]]               #     not punct
+               (?:                        #     followed by...
+                   [^[:blank:]=]*?        #         any number non-blank, non-=
+                   [^[:punct:][:blank:]]  #         one not blank or punct
+               )?                         #     ... optionally
+           )                              # ... required
+           (?:                            # followed by value consisting of...
+               (?<lopspace>[[:blank:]]*)  #     Optional blanks
+               (?<operator>=)             #     Required =
+               (?<ropspace>[[:blank:]]*)  #     Optional blanks
+               (?<value>.+)               #     String value
+           )?                             # ... optionally
+           $                              # end of line
+        /x) {
+            if ($+{name} eq 'syntax-version') {
+                # Set explicit version in case we write it out later. In
+                # future releases, may change parsers depending on the
+                # version.
+                $params{value} = SYNTAX_VERSION;
+                $seen_version = 1;
             }
-
-            # We're good.
-            $tag_steps{$step} = $fh->input_line_number;
-            push @curr_steps => App::Sqitch::Plan::Step->new(
-                name => $step,
-                tag  => $curr_tag,
-            );
-
+            my $prag = App::Sqitch::Plan::Pragma->new( plan => $self, %+, %params );
+            push @lines => $prag;
             next LINE;
         }
 
+        # Is it a tag or a change?
+        my $type = $line =~ /^[[:blank:]]*[@]/ ? 'tag' : 'change';
+        my $name_re = qr/
+             [^[:punct:]]               #     not punct
+             (?:                        #     followed by...
+                 [^[:blank:]@]*         #         any number non-blank, non-@
+                 [^[:punct:][:blank:]]  #         one not blank or punct
+             )?                         #     ... optionally
+        /x;
+
+        $line =~ /
+           ^                                    # Beginning of line
+           (?<lspace>[[:blank:]]*)?             # Optional leading space
+           (?:                                  # followed by...
+               [@]                              #     @ for tag
+           |                                    # ...or...
+               (?<lopspace>[[:blank:]]*)        #     Optional blanks
+               (?<operator>[+-])                #     Required + or -
+               (?<ropspace>[[:blank:]]*)        #     Optional blanks
+           )?                                   # ... optionally
+           (?<name>$name_re)                    # followed by name
+           (?:                                  # followed by...
+               (?<pspace>[[:blank:]]+)          #     Blanks
+               (?<dependencies>.+)              # Other stuff
+           )?                                   # ... optionally
+           $                                    # end of line
+        /x;
+
+        %params = ( %params, %+ );
+
+        # Make sure we have a valid name.
         $self->sqitch->fail(
             "Syntax error in $file at line ",
-            $fh->input_line_number, qq{: "$line"}
-        );
-    }
+            $fh->input_line_number,
+            qq{: Invalid $type "$line"; ${type}s must not begin with },
+            'punctuation or end in punctuation or digits following punctuation'
+        ) if !$params{name} || $params{name} =~ /[[:punct:]][[:digit:]]*\z/;
 
-    if ($curr_tag) {
-        push @{ $curr_tag->_steps } => $self->sort_steps(
-            \%prev_steps, @curr_steps
-        );
-        push @plan => $curr_tag;
-        $tags->{$_} = $#plan for $curr_tag->names;
-    }
+        # It must not be a reserved name.
+        $self->sqitch->fail(
+            "Syntax error in $file at line ",
+            $fh->input_line_number,
+            qq{: "$params{name}" is a reserved name},
+        ) if $params{name} eq 'HEAD' || $params{name} eq 'ROOT';
 
-    # Index HEAD symbolic tag.
-    $tags->{HEAD} = $#plan;
+        # It must not loo, like a SHA1 hash.
+        $self->sqitch->fail(
+            "Syntax error in $file at line ",
+            $fh->input_line_number,
+            qq{: "$params{name}" is invalid because it could be confused with a SHA1 ID},
+        ) if $params{name} =~ /^[0-9a-f]{40}/;
 
-    return \@plan;
-}
-
-sub load_untracked {
-    my ( $self, $plan ) = @_;
-    my $sqitch = $self->sqitch;
-
-    my %steps = map { map { $_->name => 1 } $_->steps } @{ $plan };
-    my $ext   = $sqitch->extension;
-    my $dir   = $sqitch->deploy_dir;
-    my $skip  = scalar $dir->dir_list;
-    my @steps;
-
-    # Ignore VCS directories (borrowed from App::Ack).
-    my $ignore_dirs = join '|', map { quotemeta } qw(
-        .bzr
-        .cdv
-        ~.dep
-        ~.dot
-        ~.nib
-        ~.plst
-        .git
-        .hg
-        .pc
-        .svn
-        _MTN
-        blib
-        CVS
-        RCS
-        SCCS
-        _darcs
-        _sgbak
-        autom4te.cache
-        cover_db
-        _build
-    );
-
-    require File::Find::Rule;
-    my $rule = File::Find::Rule->new;
-
-    $rule = $rule->or(
-
-        # Ignore VCS directories.
-        $rule->new->directory->name(qr/^(?:$ignore_dirs)$/)->prune->discard,
-
-        # Find files.
-        $rule->new->file->name(qr/[.]\Q$ext\E$/)->exec(sub {
-            my $file = pop;
-            if ($skip) {
-                # Remove $skip directories from the file name.
-                my $fobj = file $file;
-                my @dirs = $fobj->dir->dir_list;
-                $file = file(
-                    @dirs[ $skip .. $#dirs ], $fobj->basename
-                )->stringify;
+        if ($type eq 'tag') {
+            # Fail if no changes.
+            unless ($prev_change) {
+                $self->sqitch->fail(
+                    "Error in $file at line ",
+                    $fh->input_line_number,
+                    qq{: \u$type "$params{name}" declared without a preceding change},
+                );
             }
 
-            # Add the file if is is not already in the plan.
-            $file =~ s/[.]\Q$ext\E$//;
-            push @steps => $file if !$steps{$file}++;
-        }),
-    );
+            # Fail on duplicate tag.
+            my $key = '@' . $params{name};
+            if ( my $at = $line_no_for{$key} ) {
+                $self->sqitch->fail(
+                    "Syntax error in $file at line ",
+                    $fh->input_line_number,
+                    qq{: \u$type "$params{name}" duplicates earlier declaration on line $at},
+                );
+            }
 
-    # Find the untracked steps.
-    $rule->in( $sqitch->deploy_dir );
+            # Fail on dependencies.
+            if ($params{dependencies}) {
+                $self->sqitch->fail(
+                    "Syntax error in $file at line ",
+                    $fh->input_line_number,
+                    ': Tags may not specify dependencies'
+                );
+            }
 
-    my $tag = App::Sqitch::Plan::Tag->new(
-        names => ['HEAD+'],
-        plan  => $self,
-    );
-    push @{ $tag->_steps } => map { App::Sqitch::Plan::Step->new(
-        name => $_,
-        tag  => $tag,
-    ) } sort @steps;
+            if (@curr_changes) {
+                # Sort all changes up to this tag by their dependencies.
+                push @changes => $self->sort_changes(\%line_no_for, @curr_changes);
+                @curr_changes = ();
+            }
 
-    return $tag;
+            # Create the tag and associate it with the previous change.
+            $prev_tag = App::Sqitch::Plan::Tag->new(
+                plan => $self,
+                change => $prev_change,
+                %params,
+            );
+
+            # Keep track of everything and clean up.
+            $prev_change->add_tag($prev_tag);
+            push @lines => $prev_tag;
+            %line_no_for = (%line_no_for, %tag_changes, $key => $fh->input_line_number);
+            %tag_changes = ();
+        } else {
+            # Fail on duplicate change since last tag.
+            if ( my $at = $tag_changes{ $params{name} } ) {
+                $self->sqitch->fail(
+                    "Syntax error in $file at line ",
+                    $fh->input_line_number,
+                    qq{: \u$type "$params{name}" duplicates earlier declaration on line $at},
+                );
+            }
+
+            # Got dependencies?
+            if (my $deps = $params{dependencies}) {
+                my (@req, @con);
+                for my $dep (split /[[:blank:]]+/, $deps) {
+                    $self->sqitch->fail(
+                        "Syntax error in $file at line ",
+                        $fh->input_line_number,
+                        qq{: "$dep" does not look like a dependency.\n},
+                        qq{Dependencies must begin with ":" or "!" and be valid change names},
+                    ) unless $dep =~ /^([:!])((?:(?:$name_re)?[@])?$name_re)$/g;
+                    if ($1 eq ':') {
+                        push @req => $2;
+                    } else {
+                        push @con => $2;
+                    }
+                }
+                $params{requires}  = \@req;
+                $params{conflicts} = \@con;
+            }
+
+            $tag_changes{ $params{name} } = $fh->input_line_number;
+            push @curr_changes => $prev_change = App::Sqitch::Plan::Change->new(
+                plan => $self,
+                ( $prev_tag ? ( since_tag => $prev_tag ) : () ),
+                %params,
+            );
+            push @lines => $prev_change;
+
+            if (my $duped = $change_named{ $params{name} }) {
+                # Mark previously-seen change of same name as duped.
+                $duped->suffix($prev_tag->format_name);
+            }
+            $change_named{ $params{name} } = $prev_change;
+        }
+    }
+
+    # Sort and store any remaining changes.
+    push @changes => $self->sort_changes(\%line_no_for, @curr_changes) if @curr_changes;
+
+    # We should have a version pragma.
+    unshift @lines => $self->_version_line unless $seen_version;
+
+    return {
+        changes => App::Sqitch::Plan::ChangeList->new(@changes),
+        lines => App::Sqitch::Plan::LineList->new(@lines),
+    };
 }
 
-sub sort_steps {
+sub _version_line {
+    App::Sqitch::Plan::Pragma->new(
+        plan     => shift,
+        name     => 'syntax-version',
+        operator => '=',
+        value    => SYNTAX_VERSION,
+    );
+}
+
+sub sort_changes {
     my $self = shift;
     my $seen = ref $_[0] eq 'HASH' ? shift : {};
 
-    my %obj;             # maps step names to objects.
+    my %obj;             # maps change names to objects.
     my %pairs;           # all pairs ($l, $r)
     my %npred;           # number of predecessors
     my %succ;            # list of successors
-    for my $step (@_) {
+    for my $change (@_) {
 
         # Stolen from http://cpansearch.perl.org/src/CWEST/ppt-0.14/bin/tsort.
-        my $name = $step->name;
-        $obj{$name} = $step;
+        my $name = $change->name;
+        $obj{$name} = $change;
         my $p = $pairs{$name} = {};
         $npred{$name} += 0;
 
         # XXX Ignoring conflicts for now.
-        for my $dep ( $step->requires ) {
+        for my $dep ( $change->requires ) {
 
-            # Skip it if it's a step from an earlier tag.
-            next if exists $seen->{$dep};
+            # Skip it if it's a change from an earlier tag.
+            if ($dep =~ /.@/) {
+                # Need to look it up before the tag.
+                my ( $change, $tag ) = split /@/ => $dep, 2;
+                if ( my $tag_at = $seen->{"\@$tag"} ) {
+                    if ( my $change_at = $seen->{$change}) {
+                        next if $change_at < $tag_at;
+                    }
+                }
+            } else {
+                next if exists $seen->{$dep};
+            }
+
             $p->{$dep}++;
             $npred{$dep}++;
             push @{ $succ{$name} } => $dep;
@@ -294,19 +318,19 @@ sub sort_steps {
     }
 
     # Stolen from http://cpansearch.perl.org/src/CWEST/ppt-0.14/bin/tsort.
-    # Create a list of nodes without predecessors
+    # Create a list of changes without predecessors
     my @list = grep { !$npred{$_->name} } @_;
 
     my @ret;
     while (@list) {
-        my $step = pop @list;
-        unshift @ret => $step;
-        foreach my $child ( @{ $succ{$step->name} } ) {
+        my $change = pop @list;
+        unshift @ret => $change;
+        foreach my $child ( @{ $succ{$change->name} } ) {
             unless ( $pairs{$child} ) {
                 my $sqitch = $self->sqitch;
+                my $name = $change->name;
                 $self->sqitch->fail(
-                    qq{Unknown step "$child" required in },
-                    $step->deploy_file,
+                    qq{Unknown change "$child" required by change "$name"}
                 );
             }
             push @list, $obj{$child} unless --$npred{$child};
@@ -316,12 +340,12 @@ sub sort_steps {
     if ( my @cycles = map { $_->name } grep { $npred{$_->name} } @_ ) {
         my $last = pop @cycles;
         $self->sqitch->fail(
-            'Dependency cycle detected beween steps "',
+            'Dependency cycle detected beween changes "',
             join( ", ", @cycles ),
             qq{ and "$last"}
         );
     }
-    return \@ret;
+    return @ret;
 }
 
 sub open_script {
@@ -331,17 +355,21 @@ sub open_script {
     );
 }
 
-sub index_of {
-    my ( $self, $name ) = @_;
-    # Make sure the plan is loaded.
-    $self->_all;
-    return $self->_tags->{$name};
-}
+sub lines          { shift->_plan->{lines}->items }
+sub changes        { shift->_plan->{changes}->changes }
+sub tags           { shift->_plan->{changes}->tags }
+sub count          { shift->_plan->{changes}->count }
+sub index_of       { shift->_plan->{changes}->index_of(shift) }
+sub get            { shift->_plan->{changes}->get(shift) }
+sub find           { shift->_plan->{changes}->find(shift) }
+sub first_index_of { shift->_plan->{changes}->first_index_of(@_) }
+sub change_at      { shift->_plan->{changes}->change_at(shift) }
+sub last_tagged_change { shift->_plan->{changes}->last_tagged_change }
 
 sub seek {
-    my ( $self, $name ) = @_;
-    my $index = $self->index_of($name);
-    $self->sqitch->fail(qq{Cannot find tag "$name" in plan})
+    my ( $self, $key ) = @_;
+    my $index = $self->index_of($key);
+    $self->sqitch->fail(qq{Cannot find change "$key" in plan})
         unless defined $index;
     $self->position($index);
     return $self;
@@ -365,18 +393,18 @@ sub next {
 
 sub current {
     my $self = shift;
-    return ( $self->all )[ $self->position ] if $self->position >= 0;
-    return undef;
+    my $pos = $self->position;
+    return if $pos < 0;
+    $self->_plan->{changes}->change_at( $pos );
 }
 
 sub peek {
     my $self = shift;
-    ( $self->all )[ $self->position + 1 ];
+    $self->_plan->{changes}->change_at( $self->position + 1 );
 }
 
 sub last {
-    my $self = shift;
-    ( $self->all )[ -1 ];
+    shift->_plan->{changes}->change_at( -1 );
 }
 
 sub do {
@@ -386,27 +414,147 @@ sub do {
     }
 }
 
+sub add_tag {
+    my ( $self, $name ) = @_;
+    $name =~ s/^@//;
+    $self->_is_valid(tag => $name);
+
+    my $plan  = $self->_plan;
+    my $changes = $plan->{changes};
+    my $key   = "\@$name";
+
+    $self->sqitch->fail(qq{Tag "$key" already exists})
+        if defined $changes->index_of($key);
+
+    my $change = $changes->last_change or $self->sqitch->fail(
+        qq{Cannot apply tag "$key" to a plan with no changes}
+    );
+
+    my $tag = App::Sqitch::Plan::Tag->new(
+        plan => $self,
+        name => $name,
+        change => $change,
+    );
+
+    $change->add_tag($tag);
+    $changes->index_tag( $changes->index_of( $change->id ), $tag );
+    $plan->{lines}->append( $tag );
+    return $tag;
+}
+
+sub add {
+    my ( $self, $name, $requires, $conflicts ) = @_;
+    $self->_is_valid(change => $name);
+
+    my $plan  = $self->_plan;
+    my $changes = $plan->{changes};
+
+    if (defined( my $idx = $changes->index_of($name . '@HEAD') )) {
+        my $tag_idx = $changes->index_of_last_tagged;
+        $self->sqitch->fail(
+            qq{Change "$name" already exists.\n},
+            'Use "sqitch rework" to copy and rework it'
+        );
+    }
+
+    my $change = App::Sqitch::Plan::Change->new(
+        plan      => $self,
+        name      => $name,
+        requires  => $requires  ||= [],
+        conflicts => $conflicts ||= [],
+        (@{ $requires } || @{ $conflicts } ? ( pspace => ' ' ) : ()),
+    );
+
+    # Make sure dependencies are valid.
+    $self->_check_dependencies($change, 'add');
+
+    # We good.
+    $changes->append( $change );
+    $plan->{lines}->append( $change );
+    return $change;
+}
+
+sub rework {
+    my ( $self, $name, $requires, $conflicts ) = @_;
+    my $plan  = $self->_plan;
+    my $changes = $plan->{changes};
+    my $idx   = $changes->index_of($name . '@HEAD') // $self->sqitch->fail(
+        qq{Change "$name" does not exist.\n},
+        qq{Use "sqitch add $name" to add it to the plan},
+    );
+
+    my $tag_idx = $changes->index_of_last_tagged;
+    $self->sqitch->fail(
+        qq{Cannot rework "$name" without an intervening tag.\n},
+        'Use "sqitch tag" to create a tag and try again'
+    ) if !defined $tag_idx || $tag_idx < $idx;
+
+    my ($tag) = $changes->change_at($tag_idx)->tags;
+    unshift @{ $requires ||= [] } => $name . $tag->format_name;
+
+    my $orig = $changes->change_at($idx);
+    my $new  = App::Sqitch::Plan::Change->new(
+        plan      => $self,
+        name      => $name,
+        requires  => $requires,
+        conflicts => $conflicts ||= [],
+        (@{ $requires } || @{ $conflicts } ? ( pspace => ' ' ) : ()),
+    );
+
+    # Make sure dependencies are valid.
+    $self->_check_dependencies($new, 'rework');
+
+    # We good.
+    $orig->suffix($tag->format_name);
+    $changes->append( $new );
+    $plan->{lines}->append( $new );
+    return $new;
+}
+
+sub _check_dependencies {
+    my ( $self, $change, $action ) = @_;
+    my $changes = $self->_plan->{changes};
+    for my $req ( $change->requires ) {
+        next if defined $changes->index_of($req =~ /@/ ? $req : $req . '@HEAD');
+        my $name = $change->name;
+        $self->sqitch->fail(
+            qq{Cannot $action change "$name": },
+            qq{requires unknown change "$req"}
+        );
+    }
+    return $self;
+}
+
+sub _is_valid {
+    my ( $self, $type, $name ) = @_;
+    $self->sqitch->fail(qq{"$name" is a reserved name})
+        if $name eq 'HEAD' || $name eq 'ROOT';
+    $self->sqitch->fail(
+        qq{"$name" is invalid because it could be confused with a SHA1 ID}
+    ) if $name =~ /^[0-9a-f]{40}/;
+
+    $self->sqitch->fail(
+        qq{"$name" is invalid: ${type}s must not begin with punctuation },
+        'or end in punctuation or digits following punctuation'
+    ) unless $name =~ /
+        ^                          # Beginning of line
+        [^[:punct:]]               # not punct
+        (?:                        # followed by...
+            [^[:blank:]@#]*?       #     any number non-blank, non-@, non-#.
+            [^[:punct:][:blank:]]  #     one not blank or punct
+        )?                         # ... optionally
+        $                          # end of line
+    /x && $name !~ /[[:punct:]][[:digit:]]*\z/;
+}
+
 sub write_to {
     my ( $self, $file ) = @_;
-
-    # Make sure we have a valid plan for writing.
-    my @tags = $self->all;
-    if ( @tags && grep { $_ eq 'HEAD+' } $tags[-1]->names ) {
-        $self->sqitch->fail('Cannot write plan with reserved tag "HEAD+"');
-    }
 
     my $fh = IO::File->new(
         $file,
         '>:encoding(UTF-8)'
     ) or $self->sqitch->fail( "Cannot open $file: $!" );
-    $fh->print( '# Generated by Sqitch v', App::Sqitch->VERSION, ".\n#\n\n" );
-
-    for my $tag (@tags) {
-        $fh->say( '[', join( ' ', $tag->names ), ']' );
-        $fh->say($_->name) for $tag->steps;
-        $fh->say;
-    }
-
+    $fh->say($_->as_string) for $self->lines;
     $fh->close or die "Error closing $file: $!\n";
     return $self;
 }
@@ -422,9 +570,9 @@ App::Sqitch::Plan - Sqitch Deployment Plan
 
 =head1 Synopsis
 
-  my $plan = App::Sqitch::Plan->new( file => $file );
-  while (my $tag = $plan->next) {
-      say "Deploy ", join' ', @{ $tag->names };
+  my $plan = App::Sqitch::Plan->new( sqitch => $sqitch );
+  while (my $change = $plan->next) {
+      say "Deploy ", $change->format_name;
   }
 
 =head1 Description
@@ -434,13 +582,21 @@ file and provides an iteration interface for working with the plan.
 
 =head1 Interface
 
+=head2 Constants
+
+=head3 C<SYNTAX_VERSION>
+
+Returns the current version of the Sqitch plan syntax. Used for the
+C<%sytax-version> pragma.
+
 =head2 Constructors
 
 =head3 C<new>
 
-  my $plan = App::Sqitch::Plan->new(%params);
+  my $plan = App::Sqitch::Plan->new( sqitch => $sqitch );
 
-Instantiates and returns a App::Sqitch::Plan object.
+Instantiates and returns a App::Sqitch::Plan object. Takes a single parameter:
+an L<App::Sqitch> object.
 
 =head2 Accessors
 
@@ -461,131 +617,408 @@ C<next> returns C<undef>, the value will be the last index in the plan plus 1.
 
 =head3 C<index_of>
 
-  my $index = $plan->index_of($tag_name);
+  my $index      = $plan->index_of('6c2f28d125aff1deea615f8de774599acf39a7a1');
+  my $foo_index  = $plan->index_of('@foo');
+  my $bar_index  = $plan->index_of('bar');
+  my $bar1_index = $plan->index_of('bar@alpha')
+  my $bar2_index = $plan->index_of('bar@HEAD');
 
-Returns the index of the specified tag name.
+Returns the index of the specified change. Returns C<undef> if no such change
+exists. The argument may be any one of:
+
+=over
+
+=item * An ID
+
+  my $index = $plan->index_of('6c2f28d125aff1deea615f8de774599acf39a7a1');
+
+This is the SHA1 hash of a change or tag. Currently, the full 40-character hexed
+hash string must be specified.
+
+=item * A change name
+
+  my $index = $plan->index_of('users_table');
+
+The name of a change. Will throw an exception if the named change appears more
+than once in the list.
+
+=item * A tag name
+
+  my $index = $plan->index_of('@beta1');
+
+The name of a tag, including the leading C<@>.
+
+=item * A tag-qualified change name
+
+  my $index = $plan->index_of('users_table@beta1');
+
+The named change as it was last seen in the list before the specified tag.
+
+=back
+
+=head3 C<get>
+
+  my $change = $plan->get('6c2f28d125aff1deea615f8de774599acf39a7a1');
+  my $foo  = $plan->index_of('@foo');
+  my $bar  = $plan->index_of('bar');
+  my $bar1 = $plan->index_of('bar@alpha')
+  my $bar2 = $plan->index_of('bar@HEAD');
+
+Returns the change corresponding to the specified ID or name. The argument may
+be in any of the formats described for C<index_of()>.
+
+=head3 C<find>
+
+  my $change = $plan->find('6c2f28d125aff1deea615f8de774599acf39a7a1');
+  my $foo  = $plan->index_of('@foo');
+  my $bar  = $plan->index_of('bar');
+  my $bar1 = $plan->index_of('bar@alpha')
+  my $bar2 = $plan->index_of('bar@HEAD');
+
+Finds the change corresponding to the specified ID or name. The argument may be
+in any of the formats described for C<index_of()>. Unlike C<get()>, C<find()>
+will not throw an error if more than one change exists with the specified name,
+but will return the first instance.
+
+=head3 C<first_index_of>
+
+  my $index = $plan->first_index_of($change_name);
+  my $index = $plan->first_index_of($change_name, $change_or_tag_name);
+
+Returns the index of the first instance of the named change in the plan. If a
+second argument is passed, the index of the first instance of the change
+I<after> the the index of the second argument will be returned. This is useful
+for getting the index of a change as it was deployed after a particular tag, for
+example, to get the first index of the F<foo> change since the C<@beta> tag, do
+this:
+
+  my $index = $plan->first_index_of('foo', '@beta');
+
+You can also specify the first instance of a change after another change,
+including such a change at the point of a tag:
+
+  my $index = $plan->first_index_of('foo', 'users_table@beta1');
+
+The second argument must unambiguously refer to a single change in the plan. As
+such, it should usually be a tag name or tag-qualified change name. Returns
+C<undef> if the change does not appear in the plan, or if it does not appear
+after the specified second argument change name.
+
+=head3 C<last_tagged_change>
+
+  my $change = $plan->last_tagged_change;
+
+Returns the last tagged change object. Returns C<undef> if no changes have
+been tagged.
+
+=head3 C<change_at>
+
+  my $change = $plan->change_at($index);
+
+Returns the change at the specified index.
 
 =head3 C<seek>
 
-  $plan->seek($tag_name);
+  $plan->seek('@foo');
+  $plan->seek('bar');
 
-Move the plan position to the specified tag. Dies if the tag cannot be found
+Move the plan position to the specified change. Dies if the change cannot be found
 in the plan.
 
 =head3 C<reset>
 
    $plan->reset;
 
-Resets iteration. Same as C<$plan->position(-1)>, but better.
+Resets iteration. Same as C<< $plan->position(-1) >>, but better.
 
 =head3 C<next>
 
-  while (my $tag = $plan->next) {
-      say "Deploy ", join' ', @{ $tag->names };
+  while (my $change = $plan->next) {
+      say "Deploy ", $change->format_name;
   }
 
-Returns the next L<App::Sqitch::Plan::Tag> in the plan. Returns C<undef> if
-there are no more tags.
+Returns the next L<change|App::Sqitch::Plan::Change> in the plan. Returns C<undef>
+if there are no more changes.
 
 =head3 C<last>
 
-  my $tag = $plan->last;
+  my $change = $plan->last;
 
-Returns the last tag in the plan. Does not change the current position.
+Returns the last change in the plan. Does not change the current position.
 
 =head3 C<current>
 
-   my $tag = $plan->current;
+   my $change = $plan->current;
 
-Returns the same tag as was last returned by C<next()>. Returns undef if
+Returns the same change as was last returned by C<next()>. Returns C<undef> if
 C<next()> has not been called or if the plan has been reset.
 
 =head3 C<peek>
 
-   my $tag = $plan->peek;
+   my $change = $plan->peek;
 
-Returns the next tag in the plan, without incrementing the iterator. Returns
-C<undef> if there are no more tags beyond the current tag.
+Returns the next change in the plan without incrementing the iterator. Returns
+C<undef> if there are no more changes beyond the current change.
 
-=head3 C<all>
+=head3 C<changes>
 
-  my @tags = $plan->all;
+  my @changes = $plan->changes;
 
-Returns all of the tags in the plan. This constitutes the entire plan.
+Returns all of the changes in the plan. This constitutes the entire plan.
+
+=head3 C<tags>
+
+  my @tags = $plan->tags;
+
+Returns all of the tags in the plan.
+
+=head3 C<count>
+
+  my $count = $plan->count;
+
+Returns the number of changes in the plan.
+
+=head3 C<lines>
+
+  my @lines = $plan->lines;
+
+Returns all of the lines in the plan. This includes all the
+L<changes|App::Sqitch::Plan::Change>, L<tags|App::Sqitch::Plan::Tag>,
+L<pragmas|App::Sqitch::Plan::Pragma>, and L<blank
+lines|App::Sqitch::Plan::Blank>.
 
 =head3 C<do>
 
-  $plan->do(sub { say $_[0]->names->[0]; return $_[0]; });
-  $plan->do(sub { say $_->names->[0];    return $_;    });
+  $plan->do(sub { say $_[0]->name; return $_[0]; });
+  $plan->do(sub { say $_->name;    return $_;    });
 
-Pass a code reference to this method to execute it for each tag in the plan.
-Each item will be set to C<$_> before executing the code reference, and will
-also be passed as the sole argument to the code reference. If C<next()> has
-been called prior to the call to C<do()>, then only the remaining items in the
-iterator will passed to the code reference. Iteration terminates when the code
-reference returns false, so be sure to have it return a true value if you want
-it to iterate over every item.
+Pass a code reference to this method to execute it for each change in the plan.
+Each change will be stored in C<$_> before executing the code reference, and
+will also be passed as the sole argument. If C<next()> has been called prior
+to the call to C<do()>, then only the remaining changes in the iterator will
+passed to the code reference. Iteration terminates when the code reference
+returns false, so be sure to have it return a true value if you want it to
+iterate over every change.
 
 =head3 C<write_to>
 
   $plan->write_to($file);
 
-Write the plan to the named file. Comments and white space from the original
-plan are I<not> preserved, so be careful to alert the user when overwriting an
-exiting plan file.
+Write the plan to the named file, including. comments and white space from the
+original plan file.
 
 =head3 C<open_script>
 
-  my $file_handle = $plan->open_script(
-      step => $step,
-      tags => \@tag_names,
-      dir  => $sqitch->deploy_dir,
-  );
+  my $file_handle = $plan->open_script( $change->deploy_file );
 
-Opens the script corresponding to the named step in the specified directory.
-The C<tags> option is ignored, but may be used in subclasses to open a script
-at a particular point in VCS history. Returns a file handle for reading. The
+Opens the script file passed to it and returns a file handle for reading. The
 script file must be encoded in UTF-8.
-
-=head3 C<parse>
-
-Called internally to populate C<all> by parsing the plan file. Not intended to
-be used directly, though it may be overridden in subclasses.
 
 =head3 C<load>
 
-  my $tags = $plan->load;
+  my $plan_data = $plan->load;
 
-Loads the plan, including untracked steps (if C<with_untracked> is true).
-Called internally, not meant to be called directly, as it parses the plan file
-and searches the file system (if C<with_untracked>) every time it's called. If
-you want the all of the steps, including untracked, call C<all()> instead.
+Loads the plan data. Called internally, not meant to be called directly, as it
+parses the plan file and deploy scripts every time it's called. If you want
+the all of the changes, call C<changes()> instead.
 
-Subclasses should override this method to load the plan from whatever
-resources they deem appropriate.
+=head3 C<sort_changes>
 
-=head3 C<load_untracked>
+  @changes = $plan->sort_changes(@changes);
+  @changes = $plan->sort_changes( { '@foo' => 1, 'bar' => 1 }, @changes );
 
-  my $tag = $plan->load_untracked($tags);
+Sorts a list of changes in dependency order and returns them. If the first
+argument is a hash reference, its keys should be previously-seen change and tag
+names that can be assumed to be satisfied requirements for the succeeding
+changes.
 
-Loads untracked steps and returns them in a tag object with the single tag
-name C<HEAD+>. Pass in an array reference of tracked tags whose steps should
-be excluded from the returned untracked. Called internally by C<load()> and
-not meant to be called directly, as it will scan the file system on every
-call.
+=head3 C<add_tag>
 
-Subclasses may override this method to load a tag with untracked steps from
-whatever resources they deem appropriate.
+  $plan->add_tag('whee');
 
-=head3 C<sort_steps>
+Adds a tag to the plan. Exits with a fatal error if the tag already
+exists in the plan.
 
-  @steps = $plan->sort_steps(@steps);
-  @steps = $plan->sort_steps(\%seen, @steps);
+=head3 C<add>
 
-Sorts the steps passed in in dependency order and returns them. If the first
-argument is a hash reference, it is assumed to contain a list of
-previously-seen steps that can be assumed to be satisfied requirements for the
-succeeding steps.
+  $plan->add( 'whatevs' );
+  $plan->add( 'widgets', [qw(foo bar)], [qw(dr_evil)] );
+
+Adds a change to the plan. The second argument specifies a list of required
+changes. The third argument specifies a list of conflicting changes. Exits with a
+fatal error if the change already exists, or if the any of the dependencies are
+unknown.
+
+=head3 C<rework>
+
+  $plan->rework( 'whatevs' );
+  $plan->rework( 'widgets', [qw(foo bar)], [qw(dr_evil)] );
+
+Reworks an existing change. Said change must already exist in the plan and be
+tagged or have a tag following it or an exception will be thrown. The previous
+occurrence of the change will have the suffix of the most recent tag added to
+it, and a new tag instance will be added to the list.
+
+=head1 Plan File
+
+A plan file describes the deployment changes to be run against a database, and
+is typically maintained using the L<C<add>|sqitch-add> and
+L<C<rework>|sqitch-rework> commands. Its contents must be plain text encoded
+as UTF-8. Each line of a plan file may be one of four things:
+
+=over
+
+=item *
+
+A blank line. May include any amount of white space, which will be ignored.
+
+=item * A Pragma
+
+Begins with a C<%>, followed by a pragma name, optionally followed by C<=> and
+a value. Currently, the only pragma recognized by Sqitch is C<syntax-version>.
+
+=item * A change.
+
+A named change change. A change consists of an optional C<+> or C<-> character
+followed by one or more non-whitespace characters, of which the first and last
+characters must not be punctuation characters. A change may then also contain
+a space-delimited list of dependencies, which are the names of other changes
+or tags prefixed with a colon (C<:>) for required changes or with an
+exclamation point (C<!>) for conflicting changes.
+
+Changes with a leading C<-> are slated to be reverted, while changes with no
+character or a leading C<+> are to be deployed.
+
+=item * A tag.
+
+A named deployment tag, generally corresponding to a release name. Begins with
+a C<@>, followed by one or more non-whitespace characters. The first and last
+characters must not be punctuation characters.
+
+=item * A comment.
+
+Begins with a C<#> and goes to the end of the line. Preceding white space is
+ignored. May appear on a line after a pragma, change, or tag.
+
+=back
+
+Here's an example of a plan file with a single deploy change and tag:
+
+ %syntax-version=1.0.0
+ +users_table
+ @alpha
+
+There may, of course, be any number of tags and changes. Here's an expansion:
+
+ %syntax-version=1.0.0
+ +users_table
+ +insert_user
+ +update_user
+ +delete_user
+ @root
+ @alpha
+
+Here we have four changes -- "users_table", "insert_user", "update_user", and
+"delete_user" -- followed by two tags: "root" and "alpha".
+
+Most plans will have many changes and tags. Here's a longer example with three
+tagged deployment points, as well as a change that is deployed and later
+reverted:
+
+ %syntax-version=1.0.0
+ +users_table
+ +insert_user
+ +update_user
+ +delete_user
+ +dr_evil
+ @root
+ @alpha
+
+ +widgets_table
+ +list_widgets
+ @beta
+
+ -dr_evil
+ +ftw
+ @gamma
+
+Using this plan, to deploy to the "beta" tag, all of the changes up to the
+"root"/"alpha" tags must be deployed, as must changes listed before the "beta"
+tag. To then deploy to the "gamma" tag, the "dr_evil" change must be reverted
+and the "ftw" change must be deployed. If you then choose to revert to the
+"alpha" tag, then the "ftw" change will be reverted, the "dr_evil" change
+re-deployed, and the "gamma" tag removed; then the "list_widgets" must be
+reverted and the associated "beta" tag removed, then the "widgets_table" change
+must be reverted.
+
+Using this model, changes cannot be repeated between states. One I<can> repeat
+them, however, if the contents for a file in a given tag can be retrieved from
+a VCS. An example:
+
+ %syntax-version=1.0.0
+ +users_table
+ @alpha
+
+ +add_widget
+ +widgets_table
+ @beta
+
+ +add_user
+ @gamma
+
+ +widgets_created_at
+ @delta
+
+ +add_widget
+
+Note that the "add_widget" change is repeated under the state tagged "beta" and
+at the end. Sqitch will notice the repetition when it parses this file, and
+allow it only if the "beta" tag is present in the VCS. In that case, when
+doing a deployment, Sqitch will fetch the version of the file as of the "beta"
+tag and apply it at that change, and then, when it gets to the last change,
+retrieve the revision of the deployment as it currently exists in the VCS.
+This works in reverse, as well, as long as the changes in this file are always
+L<idempotent|http://en.wikipedia.org/wiki/Idempotence>.
+
+=head2 Grammar
+
+Here is the EBNF Grammar for the plan file:
+
+  plan-file    = { <pragma> | <change-line> | <tag-line> | <comment-line> | <blank-line> }* ;
+
+  blank-line   = [ <blanks> ] <eol>;
+  comment-line = <comment> ;
+  change-line    = <name> [ { <requires> | <conflicts} } ] ( <eol> | <comment> ) ;
+  tag-line     = <tag> ( <eol> | <comment> ) ;
+  pragma       = "%" [ <blanks> ] <name> [ <blanks> ] = [ <blanks> ] <value> ( <eol> | <comment> ) ;
+
+  tag          = "@" <name> ;
+  requires     = ":" <name> ;
+  conflicts    = "!" <name> ;
+  name         = <non-punct> [ [ ? non-blank and not "@" or "#" characters ? ] <non-punct> ] ;
+  non-punct    = ? non-punctuation, non-blank character ? ;
+  value        = ? non-EOL or "#" characters ?
+
+  comment      = [ <blanks> ] "#" [ <string> ] <EOL> ;
+  eol          = [ <blanks> ] <EOL> ;
+
+  blanks       = ? blank characters ? ;
+  string       = ? non-EOL characters ? ;
+
+And written as regular expressions:
+
+  my $eol          = qr/[[:blank:]]*$/
+  my $comment      = qr/(?:[[:blank:]]+)?[#].+$/;
+  my $name         = qr/[^[:punct:][:blank:]](?:(?:[^[:space:]@]+)?[^[:punct:][:blank:]])?/;
+  my $tag          = qr/[@]$name/;
+  my $requires     = qr/[:]$name/;
+  my conflicts     = qr/[!]$name/;
+  my $tag_line     = qr/^$tag(?:$comment|$eol)/;
+  my $change_line    = qr/^$name(?:$requires|$conflicts)*(?:$comment|$eol)/;
+  my $comment_line = qr/^$comment/;
+  my $pragma    = qr/^][[:blank:]]*[%][[:blank:]]*$name[[:blank:]]*=[[:blank:]].+?(?:$comment|$eol)$/;
+  my $blank_line   = qr/^$eol/;
+  my $plan         = qr/(?:$pragma|$change_line|$tag_line|$comment_line|$blank_line)+/ms;
 
 =head1 See Also
 

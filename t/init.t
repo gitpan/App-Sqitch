@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use v5.10.1;
 use utf8;
-use Test::More tests => 93;
+use Test::More tests => 111;
 #use Test::More 'no_plan';
 use App::Sqitch;
 use Path::Class;
@@ -12,6 +12,7 @@ use Test::Dir;
 use Test::File qw(file_not_exists_ok file_exists_ok);
 use Test::Exception;
 use Test::File::Contents;
+use Test::NoWarnings;
 use File::Path qw(remove_tree make_path);
 use lib 't/lib';
 use MockOutput;
@@ -38,23 +39,25 @@ $ENV{SQITCH_SYSTEM_CONFIG} = 'nonexistent.sys';
 
 ##############################################################################
 # Test make_directories.
-my $sqitch = App::Sqitch->new(sql_dir => dir 'init.mkdir');
+my $sqitch = App::Sqitch->new(top_dir => dir 'init.mkdir');
 isa_ok my $init = $CLASS->new(sqitch => $sqitch), $CLASS, 'New init object';
 
 can_ok $init, 'make_directories';
-for my $attr (map { "$_\_dir"} qw(sql deploy revert test)) {
+for my $attr (map { "$_\_dir"} qw(top deploy revert test)) {
     dir_not_exists_ok $sqitch->$attr;
 }
 
-my $sql_dir = $sqitch->sql_dir->stringify;
-END { remove_tree $sql_dir }
+my $top_dir_string = $sqitch->top_dir->stringify;
+END { remove_tree $top_dir_string }
 
 ok $init->make_directories, 'Make the directories';
-for my $attr (map { "$_\_dir"} qw(sql deploy revert test)) {
+for my $attr (map { "$_\_dir"} qw(top deploy revert test)) {
     dir_exists_ok $sqitch->$attr;
 }
+my $sep = dir('')->stringify;
 is_deeply +MockOutput->get_info, [
-    map { ["Created " . $sqitch->$_] } map { "$_\_dir" } qw(deploy revert test)
+    map { ["Created " . $sqitch->$_ . $sep] }
+    map { "$_\_dir" } qw(deploy revert test)
 ], 'Each should have been sent to info';
 
 # Do it again.
@@ -66,14 +69,14 @@ remove_tree $sqitch->revert_dir->stringify;
 ok $init->make_directories, 'Make the directories once more';
 dir_exists_ok $sqitch->revert_dir, 'revert dir exists again';
 is_deeply +MockOutput->get_info, [
-    ['Created ' . $sqitch->revert_dir],
+    ['Created ' . $sqitch->revert_dir . $sep],
 ], 'Should have noted creation of revert dir';
 
 # Handle errors.
-remove_tree $sql_dir;
-make_path $sql_dir;
-chmod 0000, $sql_dir;
-END { chmod 0400, $sql_dir }
+remove_tree $top_dir_string;
+make_path $top_dir_string;
+chmod 0000, $top_dir_string;
+END { chmod 0400, $top_dir_string }
 throws_ok { $init->make_directories } qr/FAIL/, 'Should fail on permissio issue';
 is_deeply +MockOutput->get_fail, [
     ['Error creating ' . $sqitch->deploy_dir . ': Permission denied'],
@@ -90,6 +93,15 @@ chdir $write_dir;
 END { chdir File::Spec->updir }
 my $conf_file = $sqitch->config->local_file;
 
+# Mock UUID::Tiny.
+my $uuid_mock = Test::MockModule->new('UUID::Tiny');
+my $uuid_type;
+$uuid_mock->mock(create_uuid_as_string => sub {
+    $uuid_type = shift;
+    return 'bb70577f-56d6-488c-bbcb-6d093f81de91';
+});
+my $uri = 'urn:uuid:bb70577f-56d6-488c-bbcb-6d093f81de91';
+
 $sqitch = App::Sqitch->new;
 ok $init = $CLASS->new(sqitch => $sqitch), 'Another init object';
 file_not_exists_ok $conf_file;
@@ -98,41 +110,49 @@ file_not_exists_ok $conf_file;
 ok $init->write_config, 'Write the config';
 file_exists_ok $conf_file;
 is_deeply read_config $conf_file, {
-}, 'The configuration file should have no variables';
+    'core.uri' => $uri,
+}, 'The configuration file should have one variable';
 is_deeply +MockOutput->get_info, [
     ['Created ' . $conf_file]
 ], 'The creation should be sent to info';
-
-my $deploy_dir = File::Spec->catfile(qw(sql deploy));
-my $revert_dir = File::Spec->catfile(qw(sql revert));
-my $test_dir   = File::Spec->catfile(qw(sql test));
-file_contents_like $conf_file, qr{\Q# [core]
+is $uuid_type, UUID::Tiny::UUID_V4(), 'Should use a V4 UUID';
+my $top_dir    = File::Spec->curdir;
+my $deploy_dir = File::Spec->catdir(qw(deploy));
+my $revert_dir = File::Spec->catdir(qw(revert));
+my $test_dir   = File::Spec->catdir(qw(test));
+my $plan_file  = $sqitch->top_dir->file('sqitch.plan')->cleanup->stringify;
+file_contents_like $conf_file, qr{\Q[core]
+	uri = $uri
 	# engine = 
-	# plan_file = sqitch.plan
-	# sql_dir = sql
+	# plan_file = $plan_file
+	# top_dir = $top_dir
 	# deploy_dir = $deploy_dir
 	# revert_dir = $revert_dir
 	# test_dir = $test_dir
 	# extension = sql
-}m, 'Entire core section should be commented-out';
+}m, 'All but URI in core section should be commented-out';
 unlink $conf_file;
 
-# Set one option.
-$sqitch = App::Sqitch->new(extension => 'foo');
+# Set two options.
+$sqitch = App::Sqitch->new(
+    extension => 'foo',
+    uri       => URI->new('https://github.com/theory/sqitch/'),
+);
 ok $init = $CLASS->new(sqitch => $sqitch), 'Another init object';
 ok $init->write_config, 'Write the config';
 file_exists_ok $conf_file;
 is_deeply read_config $conf_file, {
+    'core.uri'       => 'https://github.com/theory/sqitch/',
     'core.extension' => 'foo',
-}, 'The configuration should have been written with only one setting';
+}, 'The configuration should have been written with the two settings';
 is_deeply +MockOutput->get_info, [
     ['Created ' . $conf_file]
 ], 'The creation should be sent to info';
 
-file_contents_like $conf_file, qr{\Q
+file_contents_like $conf_file, qr{
 	# engine = 
-	# plan_file = sqitch.plan
-	# sql_dir = sql
+	# plan_file = $plan_file
+	# top_dir = $top_dir
 	# deploy_dir = $deploy_dir
 	# revert_dir = $revert_dir
 	# test_dir = $test_dir
@@ -141,6 +161,7 @@ file_contents_like $conf_file, qr{\Q
 # Go again.
 ok $init->write_config, 'Write the config again';
 is_deeply read_config $conf_file, {
+    'core.uri'       => 'https://github.com/theory/sqitch/',
     'core.extension' => 'foo',
 }, 'The configuration should be unchanged';
 is_deeply +MockOutput->get_info, [
@@ -156,15 +177,16 @@ USERCONF: {
     ok $init->write_config, 'Write the config with a user conf';
     file_exists_ok $conf_file;
     is_deeply read_config $conf_file, {
+        'core.uri' => $uri,
         'core.extension' => 'foo',
-    }, 'The configuration should just have core.sql_dir';
+    }, 'The configuration should just have core.uri and core.top_dir';
     is_deeply +MockOutput->get_info, [
         ['Created ' . $conf_file]
     ], 'The creation should be sent to info again';
     file_contents_like $conf_file, qr{\Q
 	# engine = 
-	# plan_file = sqitch.plan
-	# sql_dir = sql
+	# plan_file = $plan_file
+	# top_dir = $top_dir
 	# deploy_dir = $deploy_dir
 	# revert_dir = $revert_dir
 	# test_dir = $test_dir
@@ -181,19 +203,23 @@ SYSTEMCONF: {
     ok $init->write_config, 'Write the config with a system conf';
     file_exists_ok $conf_file;
     is_deeply read_config $conf_file, {
+        'core.uri' => $uri,
         'core.extension' => 'foo',
         'core.engine' => 'pg',
-    }, 'The configuration should just have core.sql_dir';
+        'core.uri' => URI->new('https://github.com/theory/sqitch/'),
+    }, 'The configuration should have local and system config';
     is_deeply +MockOutput->get_info, [
         ['Created ' . $conf_file]
     ], 'The creation should be sent to info again';
 
-    my $deploy_dir = File::Spec->catfile(qw(migrations deploy));
-    my $revert_dir = File::Spec->catfile(qw(migrations revert));
-    my $test_dir   = File::Spec->catfile(qw(migrations test));
+    my $deploy_dir = File::Spec->catdir(qw(migrations deploy));
+    my $revert_dir = File::Spec->catdir(qw(migrations revert));
+    my $test_dir   = File::Spec->catdir(qw(migrations test));
+    my $plan_file  = $sqitch->top_dir->file('sqitch.plan')->stringify;
+
     file_contents_like $conf_file, qr{\Q
-	# plan_file = sqitch.plan
-	# sql_dir = migrations
+	# plan_file = $plan_file
+	# top_dir = migrations
 	# deploy_dir = $deploy_dir
 	# revert_dir = $revert_dir
 	# test_dir = $test_dir
@@ -220,6 +246,7 @@ is_deeply +MockOutput->get_info, [
 ], 'The creation should be sent to info once more';
 
 is_deeply read_config $conf_file, {
+    'core.uri'        => $uri,
     'core.plan_file'  => 'my.plan',
     'core.deploy_dir' => 'dep',
     'core.revert_dir' => 'rev',
@@ -245,6 +272,7 @@ is_deeply +MockOutput->get_info, [
 ], 'The creation should be sent to info yet again';
 
 is_deeply read_config $conf_file, {
+    'core.uri'            => $uri,
     'core.engine'         => 'sqlite',
     'core.sqlite.client'  => '/to/sqlite3',
     'core.sqlite.db_name' => 'my.db',
@@ -263,7 +291,8 @@ is_deeply +MockOutput->get_info, [
     ['Created ' . $conf_file]
 ], 'The creation should be sent to info again again';
 is_deeply read_config $conf_file, {
-    'core.engine'         => 'sqlite',
+    'core.uri'    => $uri,
+    'core.engine' => 'sqlite',
 }, 'The configuration should have been written with only the engine var';
 
 file_contents_like $conf_file, qr{^\Q# [core "sqlite"]
@@ -290,6 +319,7 @@ USERCONF: {
     ], 'The creation should be sent to info once more';
 
     is_deeply read_config $conf_file, {
+        'core.uri'            => $uri,
         'core.engine'         => 'sqlite',
         'core.sqlite.db_name' => 'my.db',
     }, 'New config should have been written with sqlite values';
@@ -321,6 +351,7 @@ is_deeply +MockOutput->get_info, [
 ], 'The creation should be sent to info one more time';
 
 is_deeply read_config $conf_file, {
+    'core.uri'         => $uri,
     'core.engine'      => 'pg',
     'core.pg.client'   => '/to/psql',
     'core.pg.db_name'  => 'thingies',
@@ -344,8 +375,9 @@ is_deeply +MockOutput->get_info, [
     ['Created ' . $conf_file]
 ], 'The creation should be sent to info again again again';
 is_deeply read_config $conf_file, {
-    'core.engine'         => 'pg',
-}, 'The configuration should have been written with only the engine var';
+    'core.uri'    => $uri,
+    'core.engine' => 'pg',
+}, 'The configuration should have been written with only the uri & engine vars';
 
 file_contents_like $conf_file, qr{^\Q# [core "pg"]
 	# db_name = 
@@ -374,6 +406,7 @@ USERCONF: {
     ], 'The pg config creation should be sent to info';
 
     is_deeply read_config $conf_file, {
+        'core.uri'         => $uri,
         'core.engine'      => 'pg',
         'core.pg.db_name'  => 'thingies',
     }, 'The configuration should have been written with pg options';
@@ -387,3 +420,52 @@ USERCONF: {
     file_contents_like $conf_file, qr/^\t# host = localhost\n/m,
         'Configured host should be in a comment';
 }
+
+##############################################################################
+# Test write_plan().
+can_ok $init, 'write_plan';
+$plan_file = $sqitch->plan_file;
+file_not_exists_ok $plan_file, 'Plan file should not yet exist';
+ok $init->write_plan, 'Write the plan file';
+is_deeply +MockOutput->get_info, [
+    ['Created ' . $plan_file]
+], 'The plan creation should be sent to info';
+file_exists_ok $plan_file, 'Plan file should now exist';
+file_contents_is $plan_file,
+    '%syntax-version=' . App::Sqitch::Plan::SYNTAX_VERSION() . "\n\n",
+ 'The contents should be correct';
+
+# Write more to the plan.
+my $fh = $plan_file->open('>:utf8') or die "Cannot open $plan_file: $!\n";
+$fh->say('# testing 1, 2, 3');
+$fh->close;
+
+# Try writing again.
+ok $init->write_plan, 'Write the plan file again';
+file_contents_like $plan_file, qr/testing 1, 2, 3/,
+    'The file should not be overwritten';
+
+##############################################################################
+# Bring it all together, yo.
+unlink $conf_file;
+unlink $plan_file;
+ok $init->execute, 'Execute!';
+
+# Should have directories.
+for my $attr (map { "$_\_dir"} qw(top deploy revert test)) {
+    dir_exists_ok $sqitch->$attr;
+}
+
+# Should have config and plan.
+file_exists_ok $conf_file;
+file_exists_ok $plan_file;
+
+# Shoudld have the output.
+my @dir_messages = map {
+    ['Created ' . $sqitch->$_ . $sep] } map { "$_\_dir"
+} qw(deploy revert test);
+is_deeply +MockOutput->get_info, [
+    ['Created ' . $conf_file],
+    ['Created ' . $plan_file],
+    @dir_messages,
+], 'Should have status messages';

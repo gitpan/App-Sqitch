@@ -5,10 +5,13 @@ use warnings;
 use v5.10.1;
 use Test::More;
 use Test::MockModule;
+use Test::Exception;
+use Locale::TextDomain qw(App-Sqitch);
 use Capture::Tiny qw(:all);
 use Try::Tiny;
 use App::Sqitch;
 use App::Sqitch::Plan;
+use URI;
 
 my $CLASS;
 
@@ -29,7 +32,9 @@ is_deeply [$CLASS->config_vars], [
     sqitch_schema => 'any',
 ], 'config_vars should return three vars';
 
-my $sqitch = App::Sqitch->new;
+my $sqitch = App::Sqitch->new(
+    uri => URI->new('https://github.com/theory/sqitch/'),
+);
 isa_ok my $pg = $CLASS->new(sqitch => $sqitch), $CLASS;
 
 my $client = 'psql' . ($^O eq 'Win32' ? '.exe' : '');
@@ -39,8 +44,8 @@ for my $attr (qw(username password db_name host port)) {
     is $pg->$attr, undef, "$attr default should be undef";
 }
 
-is $pg->target, $ENV{PGDATABASE} || $ENV{PGUSER} || $ENV{USER},
-    'Target should fall back on environment variables';
+is $pg->destination, $ENV{PGDATABASE} || $ENV{PGUSER} || $ENV{USER},
+    'Destination should fall back on environment variables';
 
 my @std_opts = (
     '--quiet',
@@ -55,20 +60,24 @@ is_deeply [$pg->psql], [$client, @std_opts],
     'psql command should be std opts-only';
 
 ##############################################################################
-# Test other configs for the target.
-for my $env (qw(PGDATABASE PGUSER USER)) {
-    my $pg = $CLASS->new(sqitch => $sqitch);
-    local $ENV{$env} = "\$ENV=whatever";
-    is $pg->target, "\$ENV=whatever", "Target should read \$$env";
-}
-
+# Test other configs for the destination.
 ENV: {
-    my $pg = $CLASS->new(sqitch => $sqitch, username => 'hi');
-    is $pg->target, 'hi', 'Target shoul read username';
+    # Make sure we override system-set vars.
+    local $ENV{PGDATABASE};
+    local $ENV{PGUSER};
+    local $ENV{USER};
+    for my $env (qw(PGDATABASE PGUSER USER)) {
+        my $pg = $CLASS->new(sqitch => $sqitch);
+        local $ENV{$env} = "\$ENV=whatever";
+        is $pg->destination, "\$ENV=whatever", "Destination should read \$$env";
+    }
 
-    local $ENV{PGDATABASE} = 'mydb';
     $pg = $CLASS->new(sqitch => $sqitch, username => 'hi');
-    is $pg->target, 'mydb', 'Target should prefer $PGDATABASE to username';
+    is $pg->destination, 'hi', 'Destination should read username';
+
+    $ENV{PGDATABASE} = 'mydb';
+    $pg = $CLASS->new(sqitch => $sqitch, username => 'hi');
+    is $pg->destination, 'mydb', 'Destination should prefer $PGDATABASE to username';
 }
 
 ##############################################################################
@@ -91,7 +100,7 @@ is $pg->client, '/path/to/psql', 'client should be as configured';
 is $pg->username, 'freddy', 'username should be as configured';
 is $pg->password, 's3cr3t', 'password should be as configured';
 is $pg->db_name, 'widgets', 'db_name should be as configured';
-is $pg->target, 'widgets', 'target should default to db_name';
+is $pg->destination, 'widgets', 'destination should default to db_name';
 is $pg->host, 'db.example.com', 'host should be as configured';
 is $pg->port, 1234, 'port should be as configured';
 is $pg->sqitch_schema, 'meta', 'sqitch_schema should be as configured';
@@ -111,6 +120,7 @@ $sqitch = App::Sqitch->new(
     'db_name'       => 'widgets_dev',
     'host'          => 'foo.com',
     'port'          => 98760,
+    uri             => URI->new('https://github.com/theory/sqitch/'),
 );
 
 ok $pg = $CLASS->new(sqitch => $sqitch), 'Create a pg with sqitch with options';
@@ -119,7 +129,7 @@ is $pg->client, '/some/other/psql', 'client should be as optioned';
 is $pg->username, 'anna', 'username should be as optioned';
 is $pg->password, 's3cr3t', 'password should still be as configured';
 is $pg->db_name, 'widgets_dev', 'db_name should be as optioned';
-is $pg->target, 'widgets_dev', 'target should still default to db_name';
+is $pg->destination, 'widgets_dev', 'destination should still default to db_name';
 is $pg->host, 'foo.com', 'host should be as optioned';
 is $pg->port, 98760, 'port should be as optioned';
 is $pg->sqitch_schema, 'meta', 'sqitch_schema should still be as configured';
@@ -197,17 +207,15 @@ can_ok $CLASS, qw(
     initialize
     run_file
     run_handle
-    begin_deploy_tag
-    commit_deploy_tag
-    log_deploy_step
-    begin_revert_tag
-    commit_revert_tag
-    log_revert_step
+    log_deploy_change
+    log_fail_change
+    log_revert_change
+    latest_change_id
     is_deployed_tag
-    is_deployed_step
-    deployed_steps_for
+    is_deployed_change
     check_requires
     check_conflicts
+    name_for_change_id
 );
 
 my @cleanup;
@@ -218,7 +226,12 @@ END {
 }
 
 subtest 'live database' => sub {
-    $sqitch = App::Sqitch->new('username' => 'postgres');
+    $sqitch = App::Sqitch->new(
+        username  => 'postgres',
+        top_dir   => Path::Class::dir(qw(t pg)),
+        plan_file => Path::Class::file(qw(t pg sqitch.plan)),
+        uri       => URI->new('https://github.com/theory/sqitch/'),
+    );
     $pg = $CLASS->new(sqitch => $sqitch);
     try {
         $pg->_dbh;
@@ -232,6 +245,8 @@ subtest 'live database' => sub {
     push @cleanup, 'DROP SCHEMA ' . $pg->sqitch_schema . ' CASCADE';
     ok $pg->initialize, 'Initialize the database';
     ok $pg->initialized, 'Database should now be initialized';
+    is $pg->_dbh->selectcol_arrayref('SHOW search_path')->[0], 'sqitch',
+        'The search path should be set';
 
     # Try it with a different schema name.
     ok $pg = $CLASS->new(
@@ -239,570 +254,205 @@ subtest 'live database' => sub {
         sqitch_schema => '__sqitchtest',
     ), 'Create a pg with postgres user and __sqitchtest schema';
 
-    is $pg->current_tag_name, undef, 'No init, no current tag';
+    is $pg->latest_change_id, undef, 'No init, no changes';
 
     ok !$pg->initialized, 'Database should no longer seem initialized';
     push @cleanup, 'DROP SCHEMA __sqitchtest CASCADE';
     ok $pg->initialize, 'Initialize the database again';
     ok $pg->initialized, 'Database should be initialized again';
+    is $pg->_dbh->selectcol_arrayref('SHOW search_path')->[0], '__sqitchtest',
+        'The search path should be set to the new path';
 
-    # Test begin_deploy_tag() and commit_deploy_tag().
-    my $sqitch = App::Sqitch->new( sql_dir => Path::Class::dir(qw(t pg)) );
-    my $plan   = App::Sqitch::Plan->new( sqitch => $sqitch );
-    my $tag    = App::Sqitch::Plan::Tag->new(
-        names => ['alpha'],
-        plan  => $plan,
-    );
+    is $pg->latest_change_id, undef, 'Still no changes';
 
-    is $pg->current_tag_name, undef, 'Should have no current tag';
-    is_deeply [$pg->deployed_steps_for($tag)], [],
-        'Should be no deployed steps';
-    ok !$pg->is_deployed_tag($tag), 'The "alpha" tag should not be deployed';
+    # Make sure a second attempt to initialize dies.
+    throws_ok { $pg->initialize } 'App::Sqitch::X',
+        'Should die on existing schema';
+    is $@->ident, 'pg', 'Mode should be "pg"';
+    is $@->message, __x(
+        'Sqitch schema "{schema}" already exists',
+        schema => '__sqitchtest',
+    ), 'And it should show the proper schema in the error message';
 
-    ok $pg->begin_deploy_tag($tag), 'Begin deploying "alpha" tag';
-    ok $pg->commit_deploy_tag($tag), 'Commit "alpha" tag';
-    is_deeply [$pg->deployed_steps_for($tag)], [],
-        'Still should be no deployed steps';
-    is $pg->current_tag_name, 'alpha', 'Should get "alpha" as current tag';
-    ok $pg->is_deployed_tag($tag), 'The "alpha" tag should now be deployed';
-
-    is_deeply $pg->_dbh->selectrow_arrayref(
-        'SELECT tag_id, applied_by FROM tags'
-    ), [1, $pg->actor],
-        'A record should have been inserted into the tags table';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_name, tag_id FROM tag_names'
-    ), [['alpha', 1]],
-        'A record should have been inserted into the tag_names table';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT step, tag_id, deployed_by, requires, conflicts FROM steps'
-    ), [], 'No record should have been inserted into the steps table';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT event, step, tags, logged_by FROM events'
-    ), [['apply', '', ['alpha'], $pg->actor]],
-        'The tag application should have been logged';
-
-    # Now revert it.
-    ok $pg->begin_revert_tag($tag), 'Begin reverting "alpha" tag';
-    ok $pg->commit_revert_tag($tag), 'Commit "alpha" reversion';
-    is_deeply [$pg->deployed_steps_for($tag)], [],
-        'Still should be no deployed steps';
-    is $pg->current_tag_name, undef, 'Should again have no current tag';
-    ok !$pg->is_deployed_tag($tag), 'The "alpha" tag should again not be deployed';
-
-    is $pg->_dbh->selectrow_arrayref(
-        'SELECT tag_id, applied_by FROM tags'
-    ), undef, 'The record should be removed from the tags table';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_name, tag_id FROM tag_names'
-    ), [], 'And from the tag_names table, too';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT event, step, tags, logged_by FROM events ORDER BY logged_at'
-    ), [
-        ['apply', '', ['alpha'], $pg->actor],
-        ['remove', '', ['alpha'], $pg->actor],
-    ], 'The tag removal should have been logged';
-
-    # Let's have a couple of tag names.
-    $tag = App::Sqitch::Plan::Tag->new(
-        names => [qw(alpha beta)],
-        plan  => $plan,
-    );
-
-    ok $pg->begin_deploy_tag($tag), 'Begin deploying "alpha" tag again';
-    ok $pg->commit_deploy_tag($tag), 'Commit "alpha"/"beta" tag';
-    ok $pg->is_deployed_tag($tag), 'The "alpha" tag should again be deployed';
-
-    is_deeply [$pg->deployed_steps_for($tag)], [],
-        'Still should be no deployed steps';
-    like $pg->current_tag_name, qr/^(?:alpha|beta)$/,
-        'Should have "alpha" or "beta" as current tag name';
-
-    is_deeply $pg->_dbh->selectrow_arrayref(
-        'SELECT tag_id, applied_by FROM tags'
-    ), [2, $pg->actor],
-        'A record should have been inserted into the tags table again';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_name, tag_id FROM tag_names ORDER BY tag_name'
-    ), [['alpha', 2], ['beta', 2]],
-        'Both names should have been inserted into the tag_names table';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT event, step, tags, logged_by FROM events ORDER BY logged_at'
-    ), [
-        ['apply', '', ['alpha'], $pg->actor],
-        ['remove', '', ['alpha'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-    ], 'The new tag deploy should have been logged';
-
-    # Now revert it.
-    ok $pg->begin_revert_tag($tag), 'Begin reverting "alpha"/"beta" tag';
-    ok $pg->commit_revert_tag($tag), 'Commit "alpha"/"beta" reversion';
-    is_deeply [$pg->deployed_steps_for($tag)], [],
-        'Still should be no deployed steps';
-    is $pg->current_tag_name, undef, 'Should again have no current tag';
-    ok !$pg->is_deployed_tag($tag), 'The "alpha" tag should again not be deployed';
-
-    is $pg->_dbh->selectrow_arrayref(
-        'SELECT tag_id, applied_by FROM tags'
-    ), undef, 'The record should be removed from the tags table again';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_name, tag_id FROM tag_names'
-    ), [], 'And from the tag_names table, too, again';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT event, step, tags, logged_by FROM events ORDER BY logged_at'
-    ), [
-        ['apply', '', ['alpha'], $pg->actor],
-        ['remove', '', ['alpha'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-        ['remove', '', ['alpha', 'beta'], $pg->actor],
-    ], 'The new tag revert should also have been logged';
+    throws_ok { $pg->_dbh->do('INSERT blah INTO __bar_____') } 'App::Sqitch::X',
+        'Database error should be converted to Sqitch exception';
+    is $@->ident, $DBI::state, 'Ident should be SQL error state';
+    like $@->message, qr/^ERROR:  /, 'The message should be the PostgreSQL error';
+    like $@->previous_exception, qr/\QDBD::Pg::db do failed: /,
+        'The DBI error should be in preview_exception';
 
     ##########################################################################
-    # Now let's deploy a step, too.
-    my $step = App::Sqitch::Plan::Step->new(
-        name => 'users',
-        tag  => $tag,
-    );
+    # Test log_deploy_change().
+    my $plan = $sqitch->plan;
+    my $change = $plan->change_at(0);
+    my ($tag) = $change->tags;
+    is $change->name, 'users', 'Should have "users" change';
+    ok !$pg->is_deployed_change($change), 'The change should not be deployed';
+    ok $pg->log_deploy_change($change), 'Deploy "users" change';
+    ok $pg->is_deployed_change($change), 'The change should now be deployed';
 
-    ok !$pg->is_deployed_step($step), 'The "users" step should not be deployed';
-    ok $pg->begin_deploy_tag($tag), 'Begin deploying "alpha" tag with "users" step';
-    push @cleanup, 'DROP SCHEMA IF EXISTS __myapp CASCADE';
-    ok $pg->deploy_step($step), 'Deploy "users" step';
-    ok $pg->commit_deploy_tag($tag), 'Commit "alpha"/"beta" tag with "users" step';
-    ok $pg->is_deployed_step($step), 'The "users" step should now be deployed';
-    is_deeply [$pg->deployed_steps_for($tag)], [$step],
-        'deployed_steps_for() should return the step';
-    like $pg->current_tag_name, qr/^(?:alpha|beta)$/,
-        'Should again have "alpha" or "beta" as current tag name';
-
-    is_deeply $pg->_dbh->selectrow_arrayref(
-        'SELECT tag_id, applied_by FROM tags'
-    ), [3, $pg->actor],
-        'A record should have been inserted into the tags table once more';
+    is $pg->latest_change_id, $change->id, 'Should get users ID for latest change ID';
 
     is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_name, tag_id FROM tag_names ORDER BY tag_name'
-    ), [['alpha', 3], ['beta', 3]],
-        'Both names should have been inserted into the tag_names table';
-
-    is_deeply $pg->_dbh->selectall_arrayref(q{
-        SELECT step, tag_id, deployed_by, requires, conflicts
-          FROM steps
-         ORDER BY deployed_at
-    }), [
-        ['users', 3, $pg->actor, [], []],
-    ], 'A record should have been inserted into the steps table';
+        'SELECT change_id, change, requires, conflicts, deployed_by FROM changes'
+    ), [[$change->id, 'users', [], [], $pg->actor]],
+        'A record should have been inserted into the changes table';
 
     is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT event, step, tags, logged_by FROM events ORDER BY logged_at'
+        'SELECT event, change_id, change, tags, logged_by FROM events'
+    ), [['deploy', $change->id, 'users', ['@alpha'], $pg->actor]],
+        'A record should have been inserted into the events table';
+
+    is_deeply $pg->_dbh->selectall_arrayref(
+        'SELECT tag_id, tag, change_id, applied_by FROM tags'
     ), [
-        ['apply', '', ['alpha'], $pg->actor],
-        ['remove', '', ['alpha'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-        ['remove', '', ['alpha', 'beta'], $pg->actor],
-        ['deploy', 'users', ['alpha', 'beta'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-    ], 'The step deploy should have been logged';
+        [$tag->id, '@alpha', $change->id, $pg->actor],
+    ], 'The tag should have been logged';
 
-    ok $pg->_dbh->selectcol_arrayref(q{
-        SELECT EXISTS(
-            SELECT true
-              FROM pg_catalog.pg_namespace n
-              JOIN pg_catalog.pg_class c ON n.oid = c.relnamespace
-             WHERE c.relkind = 'r'
-               AND n.nspname = '__myapp'
-               AND c.relname = 'users'
-        );
-    })->[0], 'The users deploy script should have been run';
-
-    # Now revert it.
-    ok $pg->begin_revert_tag($tag), 'Begin reverting "alpha" tag with "users" step';
-    ok $pg->revert_step($step), 'Revert "users" again';
-    ok $pg->commit_revert_tag($tag), 'Commit "alpha"/"beta" tag with "users" step';
-    ok !$pg->is_deployed_step($step), 'The "users" step should no longer be deployed';
-    is_deeply [$pg->deployed_steps_for($tag)], [],
-        'deployed_steps_for() should again return nothing';
-    is $pg->current_tag_name, undef, 'Should once again have no current tag';
-
-    is $pg->_dbh->selectrow_arrayref(
-        'SELECT tag_id, applied_by FROM tags'
-    ), undef, 'The record should be removed from the tags table again';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_name, tag_id FROM tag_names'
-    ), [], 'And from the tag_names table, too, again';
-
-    is $pg->_dbh->selectrow_arrayref(q{
-        SELECT step, tag_id, deployed_by, requires, conflicts
-          FROM steps
-         ORDER BY deployed_at
-    }), undef, 'The step record should be removed';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT event, step, tags, logged_by FROM events ORDER BY logged_at'
-    ), [
-        ['apply', '', ['alpha'], $pg->actor],
-        ['remove', '', ['alpha'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-        ['remove', '', ['alpha', 'beta'], $pg->actor],
-        ['deploy', 'users', ['alpha', 'beta'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-        ['revert', 'users', ['alpha', 'beta'], $pg->actor],
-        ['remove', '', ['alpha', 'beta'], $pg->actor],
-    ], 'The step revert should have been logged';
-
-    ok $pg->_dbh->selectcol_arrayref(q{
-        SELECT NOT EXISTS(
-            SELECT true
-              FROM pg_catalog.pg_namespace n
-              JOIN pg_catalog.pg_class c ON n.oid = c.relnamespace
-             WHERE c.relkind = 'r'
-               AND n.nspname = '__myapp'
-               AND c.relname = 'users'
-        );
-    })->[0], 'The users revert script should have been run';
+    is $pg->name_for_change_id($change->id), 'users@alpha',
+        'name_for_change_id() should return the change name with tag';
 
     ##########################################################################
-    # Now let's deploy two steps as part of the tag.
-    my $step2 = App::Sqitch::Plan::Step->new(
-        name => 'widgets',
-        tag  => $tag,
-    );
+    # Test log_revert_change().
+    ok $pg->log_revert_change($change), 'Revert "users" change';
+    ok !$pg->is_deployed_change($change), 'The change should no longer be deployed';
 
-    ok !$pg->is_deployed_step($step2), 'The "widgets" step should not be deployed';
-    ok $pg->begin_deploy_tag($tag), 'Begin deploying tag and two steps';
-    ok $pg->deploy_step($step), 'Deploy "users" step again';
-    ok $pg->deploy_step($step2), 'Deploy "widgets"step';
-    ok $pg->commit_deploy_tag($tag), 'Commit "alpha"/"beta" tag with "users" step';
-    ok $pg->is_deployed_step($step), 'The "users" step should be deployed again';
-    ok $pg->is_deployed_step($step2), 'The "widgets" step should be deployed';
-    is_deeply [map { $_->name } $pg->deployed_steps_for($tag)], [qw(users widgets)],
-        'deployed_steps_for() should return both steps in order';
-    like $pg->current_tag_name, qr/^(?:alpha|beta)$/,
-        'Should once again "alpha" or "beta" as current tag name';
-
-    is_deeply $pg->_dbh->selectrow_arrayref(
-        'SELECT tag_id, applied_by FROM tags'
-    ), [4, $pg->actor],
-        'A record should have been inserted into the tags table once more';
+    is $pg->latest_change_id, undef, 'Should get undef for latest change';
 
     is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_name, tag_id FROM tag_names ORDER BY tag_name'
-    ), [['alpha', 4], ['beta', 4]],
-        'Both names should have been inserted into the tag_names table';
-
-    is_deeply $pg->_dbh->selectall_arrayref(q{
-        SELECT step, tag_id, deployed_by, requires, conflicts
-          FROM steps
-         ORDER BY deployed_at
-    }), [
-        ['users', 4, $pg->actor, [], []],
-        ['widgets', 4, $pg->actor, ['users'], ['dr_evil']],
-    ], 'The requires and conflicts should be logged with "widgets" step';
+        'SELECT change_id, change, requires, conflicts, deployed_by FROM changes'
+    ), [], 'The record should have been deleted from the changes table';
 
     is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT event, step, tags, logged_by FROM events ORDER BY logged_at'
+        'SELECT event, change_id, change, tags, logged_by FROM events ORDER BY logged_at'
     ), [
-        ['apply', '', ['alpha'], $pg->actor],
-        ['remove', '', ['alpha'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-        ['remove', '', ['alpha', 'beta'], $pg->actor],
-        ['deploy', 'users', ['alpha', 'beta'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-        ['revert', 'users', ['alpha', 'beta'], $pg->actor],
-        ['remove', '', ['alpha', 'beta'], $pg->actor],
-        ['deploy', 'users', ['alpha', 'beta'], $pg->actor],
-        ['deploy', 'widgets', ['alpha', 'beta'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-    ], 'Both steps should have been logged';
-
-    ok $pg->_dbh->selectcol_arrayref(q{
-        SELECT EXISTS(
-            SELECT true
-              FROM pg_catalog.pg_namespace n
-              JOIN pg_catalog.pg_class c ON n.oid = c.relnamespace
-             WHERE c.relkind = 'r'
-               AND n.nspname = '__myapp'
-               AND c.relname = 'widgets'
-        );
-    })->[0], 'The widgets deploy script should have been run';
-
-    # And revert them again.
-    ok $pg->begin_revert_tag($tag), 'Begin reverting tag with two steps';
-    ok $pg->revert_step($step2), 'Revert "widgets"';
-    ok $pg->revert_step($step), 'Revert "users" again';
-    ok $pg->commit_revert_tag($tag), 'Commit tag reversion with two steps';
-    ok !$pg->is_deployed_step($step), 'The "users" step should not be deployed again';
-    ok !$pg->is_deployed_step($step2), 'The "widgets" step should not be deployed again';
-    is_deeply [$pg->deployed_steps_for($tag)], [],
-        'deployed_steps_for should return nothing again';
-    is $pg->current_tag_name, undef, 'Should again have no current tag';
-
-    is $pg->_dbh->selectrow_arrayref(
-        'SELECT tag_id, applied_by FROM tags'
-    ), undef, 'The record should be removed from the tags table again';
+        ['deploy', $change->id, 'users', ['@alpha'], $pg->actor],
+        ['revert', $change->id, 'users', ['@alpha'], $pg->actor],
+    ], 'The revert event should have been logged';
 
     is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_name, tag_id FROM tag_names'
-    ), [], 'And from the tag_names table, too, again';
+        'SELECT tag_id, tag, change_id, applied_by FROM tags'
+    ), [], 'And the tag record should have been remved';
 
-    is $pg->_dbh->selectrow_arrayref(q{
-        SELECT step, tag_id, deployed_by, requires, conflicts
-          FROM steps
-         ORDER BY deployed_at
-    }), undef, 'The step record should be removed';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT event, step, tags, logged_by FROM events ORDER BY logged_at'
-    ), [
-        ['apply', '', ['alpha'], $pg->actor],
-        ['remove', '', ['alpha'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-        ['remove', '', ['alpha', 'beta'], $pg->actor],
-        ['deploy', 'users', ['alpha', 'beta'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-        ['revert', 'users', ['alpha', 'beta'], $pg->actor],
-        ['remove', '', ['alpha', 'beta'], $pg->actor],
-        ['deploy', 'users', ['alpha', 'beta'], $pg->actor],
-        ['deploy', 'widgets', ['alpha', 'beta'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-        ['revert', 'widgets', ['alpha', 'beta'], $pg->actor],
-        ['revert', 'users', ['alpha', 'beta'], $pg->actor],
-        ['remove', '', ['alpha', 'beta'], $pg->actor],
-    ], 'The step reverts should have been logged';
-
-    ok $pg->_dbh->selectcol_arrayref(q{
-        SELECT NOT EXISTS(
-            SELECT true
-              FROM pg_catalog.pg_namespace n
-              JOIN pg_catalog.pg_class c ON n.oid = c.relnamespace
-             WHERE c.relkind = 'r'
-               AND n.nspname = '__myapp'
-               AND c.relname IN ('users', 'widgets')
-        );
-    })->[0], 'The users and widgets revert scripts should have been run';
+    is $pg->name_for_change_id($change->id), undef,
+        'name_for_change_id() should no longer return the change name';
 
     ##########################################################################
-    # And finally, separate them into two tags.
-    ok $pg->begin_deploy_tag($tag), 'Begin tag with "users" step';
-    ok $pg->deploy_step($step), 'Deploy "users" step once more';
-    ok $pg->commit_deploy_tag($tag), 'Commit tag with "users" step';
-    is_deeply [map { $_->name } $pg->deployed_steps_for($tag)], [qw(users)],
-        'deployed_steps_for() should return the users step';
-    like $pg->current_tag_name, qr/^(?:alpha|beta)$/,
-        'Should once more have "alpha" or "beta" as current tag name';
+    # Test log_fail_change().
+    ok $pg->log_fail_change($change), 'Fail "users" change';
+    ok !$pg->is_deployed_change($change), 'The change still should not be deployed';
 
-    is_deeply $pg->_dbh->selectrow_arrayref(
-        'SELECT tag_id, applied_by FROM tags'
-    ), [5, $pg->actor],
-        'A record should have been inserted into the tags table once more';
+    is $pg->latest_change_id, undef, 'Should still get undef for latest change';
 
     is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_name, tag_id FROM tag_names ORDER BY tag_name'
-    ), [['alpha', 5], ['beta', 5]],
-        'Both names should have been inserted into the tag_names table';
+        'SELECT change_id, change, requires, conflicts, deployed_by FROM changes'
+    ), [], 'Still should have not changes table record';
+
+    is_deeply $pg->_dbh->selectall_arrayref(
+        'SELECT event, change_id, change, tags, logged_by FROM events ORDER BY logged_at'
+    ), [
+        ['deploy', $change->id, 'users', ['@alpha'], $pg->actor],
+        ['revert', $change->id, 'users', ['@alpha'], $pg->actor],
+        ['fail',   $change->id, 'users', ['@alpha'], $pg->actor],
+    ], 'The fail event should have been logged';
+
+    is_deeply $pg->_dbh->selectall_arrayref(
+        'SELECT tag_id, tag, change_id, applied_by FROM tags'
+    ), [], 'Should still have no tag records';
+
+    ##########################################################################
+    # Test a change with dependencies.
+    ok $pg->log_deploy_change($change),    'Deploy the change again';
+    ok $pg->is_deployed_tag($tag),     'The tag again should be deployed';
+    is $pg->latest_change_id, $change->id, 'Should still get users ID for latest change ID';
+
+    ok my $change2 = $plan->change_at(1),   'Get the second change';
+    ok $pg->log_deploy_change($change2),    'Deploy second change';
+    is $pg->latest_change_id, $change2->id, 'Should get "widgets" ID for latest change ID';
 
     is_deeply $pg->_dbh->selectall_arrayref(q{
-        SELECT step, tag_id, deployed_by, requires, conflicts
-          FROM steps
+        SELECT change_id, change, requires, conflicts, deployed_by
+          FROM changes
          ORDER BY deployed_at
     }), [
-        ['users', 5, $pg->actor, [], []],
-    ], 'The "users" tag should be in the steps table';
-
-    ok $pg->_dbh->selectcol_arrayref(q{
-        SELECT EXISTS(
-            SELECT true
-              FROM pg_catalog.pg_namespace n
-              JOIN pg_catalog.pg_class c ON n.oid = c.relnamespace
-             WHERE c.relkind = 'r'
-               AND n.nspname = '__myapp'
-               AND c.relname = 'users'
-        );
-    })->[0], 'The "users" deploy script should have been run again';
-
-    my $tag2 = App::Sqitch::Plan::Tag->new(
-        names => ['gamma'],
-        plan  => $plan,
-    );
-
-    $step2 = App::Sqitch::Plan::Step->new(
-        name => 'widgets',
-        tag  => $tag2,
-    );
-
-    ok $pg->is_deployed_tag($tag), 'The "alpha"/"beta" tag should be deployed';
-    ok !$pg->is_deployed_tag($tag2), 'The "gamma" tag should not be deployed';
-    ok $pg->begin_deploy_tag($tag2), 'Begin "gamma" tag with "widgets" step';
-    ok $pg->deploy_step($step2), 'Deploy "widgets" step once more';
-    ok $pg->commit_deploy_tag($tag2), 'Commit "gamma" tag with "widgets" step';
-    ok $pg->is_deployed_tag($tag2), 'The "gamma" tag should now be deployed';
-
-    is_deeply [map { $_->name } $pg->deployed_steps_for($tag)], [qw(users)],
-        'deployed_steps_for() should return the users step for the first tag';
-    is_deeply [map { $_->name } $pg->deployed_steps_for($tag2)], [qw(widgets)],
-        'deployed_steps_for() should return the widgets step for the second tag';
-    is $pg->current_tag_name, 'gamma', 'Now "gamma" should be current tag name';
+        [$change->id,  'users', [], [], $pg->actor],
+        [$change2->id, 'widgets', ['users'], ['dr_evil'], $pg->actor],
+    ], 'Should have both changes and requires/conflcits deployed';
 
     is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_id, applied_by FROM tags ORDER BY applied_at'
+        'SELECT event, change_id, change, tags, logged_by FROM events ORDER BY logged_at'
     ), [
-        [5, $pg->actor],
-        [6, $pg->actor],
-    ], 'Should have two tag records now';
+        ['deploy', $change->id,  'users',   ['@alpha'], $pg->actor],
+        ['revert', $change->id,  'users',   ['@alpha'], $pg->actor],
+        ['fail',   $change->id,  'users',   ['@alpha'], $pg->actor],
+        ['deploy', $change->id,  'users',   ['@alpha'], $pg->actor],
+        ['deploy', $change2->id, 'widgets', [],         $pg->actor],
+    ], 'The new change deploy should have been logged';
 
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_name, tag_id FROM tag_names ORDER BY tag_name'
-    ), [['alpha', 5], ['beta', 5], ['gamma', 6]],
-        'Names from both tags should be in tag_names';
-
-    is_deeply $pg->_dbh->selectall_arrayref(q{
-        SELECT step, tag_id, deployed_by, requires, conflicts
-          FROM steps
-         ORDER BY deployed_at
-    }), [
-        ['users', 5, $pg->actor, [], []],
-        ['widgets', 6, $pg->actor, ['users'], ['dr_evil']],
-    ], 'Both steps should be in the steps table';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT event, step, tags, logged_by FROM events ORDER BY logged_at OFFSET 12'
-    ), [
-        ['revert', 'users', ['alpha', 'beta'], $pg->actor],
-        ['remove', '', ['alpha', 'beta'], $pg->actor],
-        ['deploy', 'users', ['alpha', 'beta'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-        ['deploy', 'widgets', ['gamma'], $pg->actor],
-        ['apply', '', ['gamma'], $pg->actor],
-    ], 'Both tags and steps should be logged';
-
-    ok $pg->_dbh->selectcol_arrayref(q{
-        SELECT EXISTS(
-            SELECT true
-              FROM pg_catalog.pg_namespace n
-              JOIN pg_catalog.pg_class c ON n.oid = c.relnamespace
-             WHERE c.relkind = 'r'
-               AND n.nspname = '__myapp'
-               AND c.relname = 'widgets'
-        );
-    })->[0], 'The "widgets" deploy script should have been run again';
+    is $pg->name_for_change_id($change2->id), 'widgets',
+        'name_for_change_id() should return just the change name';
 
     ##########################################################################
     # Test conflicts and requires.
-    is_deeply [$pg->check_conflicts($step)], [], 'Step should have no conflicts';
-    is_deeply [$pg->check_requires($step)], [], 'Step should have no missing prereqs';
+    is_deeply [$pg->check_conflicts($change)], [], 'Change should have no conflicts';
+    is_deeply [$pg->check_requires($change)], [], 'Change should have no missing dependencies';
 
-    my $step3 = App::Sqitch::Plan::Step->new(
+    my $change3 = App::Sqitch::Plan::Change->new(
         name      => 'whatever',
-        tag       => $tag,
+        plan      => $plan,
         conflicts => ['users', 'widgets'],
         requires  => ['fred', 'barney', 'widgets'],
     );
-    is_deeply [$pg->check_conflicts($step3)], [qw(users widgets)],
-        'Should get back list of installed conflicting steps';
-    is_deeply [$pg->check_requires($step3)], [qw(fred barney)],
-        'Should get back list of missing prereq steps';
+    $plan->add('fred');
+    $plan->add('barney');
 
-    # Revert gamma.
-    ok $pg->begin_revert_tag($tag2), 'Begin reverting "gamma" step';
-    ok $pg->revert_step($step2), 'Revert "gamma"';
-    ok $pg->commit_revert_tag($tag2), 'Commit "gamma" reversion';
-    ok !$pg->is_deployed_step($step2), 'The "widgets" step should no longer be deployed';
+    is_deeply [$pg->check_conflicts($change3)], [qw(users widgets)],
+        'Should get back list of installed conflicting changes';
+    is_deeply [$pg->check_requires($change3)], [qw(barney fred)],
+        'Should get back list of missing dependencies';
 
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_id, applied_by FROM tags ORDER BY applied_at'
-    ), [
-        [5, $pg->actor],
-    ], 'Should have only the one step record now';
+    # Undeploy widgets.
+    ok $pg->log_revert_change($change2), 'Revert "widgets"';
 
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_name, tag_id FROM tag_names ORDER BY tag_name'
-    ), [['alpha', 5], ['beta', 5]],
-        'Only the alpha tags should be in tag_names';
-
-    is_deeply $pg->_dbh->selectall_arrayref(q{
-        SELECT step, tag_id, deployed_by, requires, conflicts
-          FROM steps
-         ORDER BY deployed_at
-    }), [
-        ['users', 5, $pg->actor, [], []],
-    ], 'Only the "users" step should be in the steps table';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT event, step, tags, logged_by FROM events ORDER BY logged_at OFFSET 12'
-    ), [
-        ['revert', 'users', ['alpha', 'beta'], $pg->actor],
-        ['remove', '', ['alpha', 'beta'], $pg->actor],
-        ['deploy', 'users', ['alpha', 'beta'], $pg->actor],
-        ['apply', '', ['alpha', 'beta'], $pg->actor],
-        ['deploy', 'widgets', ['gamma'], $pg->actor],
-        ['apply', '', ['gamma'], $pg->actor],
-        ['revert', 'widgets', ['gamma'], $pg->actor],
-        ['remove', '', ['gamma'], $pg->actor],
-    ], 'The revert and removal should have been logged';
-
-    ok $pg->_dbh->selectcol_arrayref(q{
-        SELECT NOT EXISTS(
-            SELECT true
-              FROM pg_catalog.pg_namespace n
-              JOIN pg_catalog.pg_class c ON n.oid = c.relnamespace
-             WHERE c.relkind = 'r'
-               AND n.nspname = '__myapp'
-               AND c.relname = 'widgets'
-        );
-    })->[0], 'The "widgets" revert script should have been run again';
-
-    is_deeply [$pg->check_conflicts($step3)], [qw(users)],
+    is_deeply [$pg->check_conflicts($change3)], [qw(users)],
         'Should now see only "users" as a conflict';
-    is_deeply [$pg->check_requires($step3)], [qw(fred barney widgets)],
-        'Should get back list all three missing prereq steps';
+    is_deeply [$pg->check_requires($change3)], [qw(barney fred widgets)],
+        'Should get back list all three missing dependencies';
 
     ##########################################################################
-    # Test failures.
-    ok $pg->begin_deploy_tag($tag2), 'Begin "gamma" tag again';
+    # Test deployed_change_ids() and deployed_change_ids_since().
+    can_ok $pg, qw(deployed_change_ids deployed_change_ids_since);
+    is_deeply [$pg->deployed_change_ids], [$change->id],
+        'Should have one deployed change ID';
+    is_deeply [$pg->deployed_change_ids_since($change)], [],
+        'Should find none deployed since that one';
 
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_id, applied_by FROM tags ORDER BY applied_at'
-    ), [
-        [5, $pg->actor],
-        [7, $pg->actor],
-    ], 'Should have only both tag records again';
+    # Add another one.
+    ok $pg->log_deploy_change($change2), 'Log another change';
+    is_deeply [$pg->deployed_change_ids], [$change->id, $change2->id],
+        'Should have both deployed change IDs';
+    is_deeply [$pg->deployed_change_ids_since($change)], [$change2->id],
+        'Should find only the second after the first';
+    is_deeply [$pg->deployed_change_ids_since($change2)], [],
+        'Should find none after the second';
 
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_name, tag_id FROM tag_names ORDER BY tag_name'
-    ), [['alpha', 5], ['beta', 5], ['gamma', 7]],
-        'Both sets of tag names should be present';
-
-    ok $pg->log_fail_step($step2), 'Log the fail step';
-    ok $pg->rollback_deploy_tag($tag2), 'Roll back "gamma" tag with "widgets" step';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_id, applied_by FROM tags ORDER BY applied_at'
-    ), [
-        [5, $pg->actor],
-    ], 'Should have only the first tag record again';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT tag_name, tag_id FROM tag_names ORDER BY tag_name'
-    ), [['alpha', 5], ['beta', 5]],
-        'Should have only the first tag names again';
-
-    is_deeply $pg->_dbh->selectall_arrayref(
-        'SELECT event, step, tags, logged_by FROM events ORDER BY logged_at OFFSET 18'
-    ), [
-        ['revert', 'widgets', ['gamma'], $pg->actor],
-        ['remove', '', ['gamma'], $pg->actor],
-        ['fail', 'widgets', ['gamma'], $pg->actor],
-    ], 'The failure should have been logged';
+    ##########################################################################
+    # Test begin_work() and finish_work().
+    can_ok $pg, qw(begin_work finish_work);
+    my $mock_dbh = Test::MockModule->new(ref $pg->_dbh, no_auto => 1);
+    my $txn;
+    $mock_dbh->mock(begin_work => sub { $txn = 1 });
+    $mock_dbh->mock(commit     => sub { $txn = 0 });
+    my @do;
+    $mock_dbh->mock(do => sub { shift; @do = @_ });
+    ok $pg->begin_work, 'Begin work';
+    ok $txn, 'Should have started a transaction';
+    is_deeply \@do, [
+        'LOCK TABLE changes IN EXCLUSIVE MODE',
+    ], 'The changes table should have been locked';
+    ok $pg->finish_work, 'Finish work';
+    ok !$txn, 'Should have committed a transaction';
+    $mock_dbh->unmock_all;
 };
 
 done_testing;

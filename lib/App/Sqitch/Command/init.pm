@@ -7,32 +7,50 @@ use utf8;
 use Moose;
 use File::Path qw(make_path);
 use Path::Class;
+use Try::Tiny;
 use Moose::Util::TypeConstraints;
 use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.31';
+our $VERSION = '0.50';
 
 sub execute {
     my $self = shift;
-    $self->make_directories;
     $self->write_config;
+    $self->write_plan;
+    $self->make_directories;
     return $self;
 }
 
 sub make_directories {
     my $self   = shift;
     my $sqitch = $self->sqitch;
+    my $sep    = dir('')->stringify; # OS-specific directory separator.
     for my $attr (qw(deploy_dir revert_dir test_dir)) {
         my $dir = $sqitch->$attr;
-        $self->info("Created $dir") if make_path $dir, { error => \my $err };
+        $self->info("Created $dir$sep") if make_path $dir, { error => \my $err };
         if ( my $diag = shift @{ $err } ) {
             my ( $path, $msg ) = %{ $diag };
             $self->fail("Error creating $path: $msg") if $path;
             $self->fail($msg);
         }
     }
+    return $self;
+}
+
+sub write_plan {
+    my $self   = shift;
+    my $sqitch = $self->sqitch;
+    my $file   = $sqitch->plan_file;
+    return $self if -f $file;
+
+    my $fh = $file->open('>:encoding(UTF-8)') or die "Cannot open $file: $!\n";
+    require App::Sqitch::Plan;
+    $fh->print('%syntax-version=', App::Sqitch::Plan::SYNTAX_VERSION(), $/, $/);
+    $fh->close or die "Error closing $file: $!\n";
+
+    $self->info("Created $file");
     return $self;
 }
 
@@ -50,7 +68,20 @@ sub write_config {
 
     my ( @vars, @comments );
 
-    # start with the engine.
+    # Start with a URI.
+    my $uri = try { $sqitch->uri } || do {
+        require UUID::Tiny;
+        require URI;
+        URI->new(
+            'urn:uuid:' . UUID::Tiny::create_uuid_as_string(UUID::Tiny::UUID_V4())
+        );
+    };
+    push @vars => {
+        key   => 'core.uri',
+        value => $uri->canonical,
+    };
+
+    # Write the engine.
     my $engine = $sqitch->engine;
     if ($engine) {
         push @vars => {
@@ -65,7 +96,7 @@ sub write_config {
     # Add in the other stuff.
     for my $name (qw(
         plan_file
-        sql_dir
+        top_dir
         deploy_dir
         revert_dir
         test_dir
@@ -229,6 +260,12 @@ Creates the deploy and revert directories.
   $init->write_config;
 
 Writes out the configuration file. Called by C<execute()>.
+
+=head3 C<write_plan>
+
+  $init->write_plan;
+
+Writes out the plan file. Called by C<execute()>.
 
 =head1 Author
 

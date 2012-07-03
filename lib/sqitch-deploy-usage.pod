@@ -4,12 +4,14 @@ sqitch-deploy-usage - Sqitch deploy usage statement
 
 =head1 Usage
 
-  sqitch [options] deploy [<step options>]
+  sqitch [options] deploy [<target options>]
 
 =head1 Options
 
-       --to <tag>         deploy up to tag
-    -u --with-untracked   include untracked steps
+       --to-target <tag>    deploy to target
+       --mode <mode>        failure reversion mode
+
+
 
 
 

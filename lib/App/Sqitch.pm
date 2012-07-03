@@ -10,21 +10,36 @@ use Path::Class;
 use Config;
 use App::Sqitch::Config;
 use App::Sqitch::Command;
+use App::Sqitch::Plan;
+use Locale::TextDomain qw(App-Sqitch);
+use App::Sqitch::X qw(hurl);
 use Moose;
+use Try::Tiny;
 use List::Util qw(first);
 use IPC::System::Simple qw(runx capturex $EXITVAL);
 use Moose::Util::TypeConstraints;
 use MooseX::Types::Path::Class;
 use namespace::autoclean;
 
-our $VERSION = '0.31';
+our $VERSION = '0.50';
 
 has plan_file => (
     is       => 'ro',
     required => 1,
+    lazy     => 1,
     default  => sub {
-        file 'sqitch.plan';
+        shift->top_dir->file('sqitch.plan')->cleanup;
     }
+);
+
+has plan => (
+    is       => 'ro',
+    isa      => 'App::Sqitch::Plan',
+    required => 1,
+    lazy     => 1,
+    default  => sub {
+        App::Sqitch::Plan->new( sqitch => shift );
+    },
 );
 
 has _engine => (
@@ -54,12 +69,12 @@ has username => ( is => 'ro', isa => 'Str' );
 has host     => ( is => 'ro', isa => 'Str' );
 has port     => ( is => 'ro', isa => 'Int' );
 
-has sql_dir => (
+has top_dir => (
     is       => 'ro',
     isa      => 'Maybe[Path::Class::Dir]',
     required => 1,
     lazy     => 1,
-    default => sub { dir shift->config->get( key => 'core.sql_dir' ) || 'sql' },
+    default => sub { dir shift->config->get( key => 'core.top_dir' ) || () },
 );
 
 has deploy_dir => (
@@ -72,7 +87,7 @@ has deploy_dir => (
         if ( my $dir = $self->config->get( key => 'core.deploy_dir' ) ) {
             return dir $dir;
         }
-        $self->sql_dir->subdir('deploy');
+        $self->top_dir->subdir('deploy')->cleanup;
     },
 );
 
@@ -86,7 +101,7 @@ has revert_dir => (
         if ( my $dir = $self->config->get( key => 'core.revert_dir' ) ) {
             return dir $dir;
         }
-        $self->sql_dir->subdir('revert');
+        $self->top_dir->subdir('revert')->cleanup;
     },
 );
 
@@ -100,7 +115,7 @@ has test_dir => (
         if ( my $dir = $self->config->get( key => 'core.test_dir' ) ) {
             return dir $dir;
         }
-        $self->sql_dir->subdir('test');
+        $self->top_dir->subdir('test')->cleanup;
     },
 );
 
@@ -145,6 +160,22 @@ has editor => (
     }
 );
 
+has uri => (
+    is       => 'ro',
+    isa      => 'URI',
+    required => 1,
+    lazy     => 1,
+    default  => sub {
+        my $uri = shift->config->get( key => 'core.uri' ) or hurl core => __x(
+            'Missing project URI. Run {command} to add a URI',
+            command => '`sqitch config core.uri URI`'
+        );
+
+        require URI;
+        return URI->new($uri);
+    }
+);
+
 sub go {
     my $class = shift;
 
@@ -171,7 +202,22 @@ sub go {
     });
 
     # 6. Execute command.
-    return $command->execute( @{$cmd_args} ) ? 0 : 2;
+    return try {
+        $command->execute( @{$cmd_args} ) ? 0 : 2;
+    } catch {
+        # Just bail for unknown exceptions.
+        $sqitch->vent($_) && return 2 unless eval { $_->isa('App::Sqitch::X') };
+
+        # It's one of ours. Vent.
+        $sqitch->vent($_->message);
+
+        # Emit the stack trace. DEV errors should be vented; otherwise trace.
+        my $meth = $_->ident eq 'DEV' ? 'vent' : 'trace';
+        $sqitch->$meth($_->stack_trace->as_string);
+
+        # Bail.
+        return $_->exitval;
+    };
 }
 
 sub _core_opts {
@@ -183,7 +229,8 @@ sub _core_opts {
         username|user|u=s
         host=s
         port=i
-        sql-dir=s
+        uri=s
+        top-dir|dir=s
         deploy-dir=s
         revert-dir=s
         test-dir=s
@@ -251,10 +298,13 @@ sub _parse_core_opts {
     }
 
     # Convert files and dirs to objects.
-    for my $dir (qw(sql_dir deploy_dir revert_dir test_dir)) {
+    for my $dir (qw(top_dir deploy_dir revert_dir test_dir)) {
         $opts{$dir} = dir $opts{$dir} if defined $opts{$dir};
     }
     $opts{plan_file} = file $opts{plan_file} if defined $opts{plan_file};
+
+    # Convert URI to URI.
+    $opts{uri} = do { require URI; URI->new($opts{uri}) } if $opts{uri};
 
     # Normalize the options (remove undefs) and return.
     $opts{verbosity} = delete $opts{verbose};
@@ -398,7 +448,7 @@ App::Sqitch - VCS-powered SQL change management
 
 =head1 Synopsis
 
-  user App::Sqitch;
+  use App::Sqitch;
   exit App::Sqitch->go;
 
 =head1 Description
@@ -445,7 +495,7 @@ Constructs and returns a new Sqitch object. The supported parameters include:
 
 =item C<port>
 
-=item C<sql_dir>
+=item C<top_dir>
 
 =item C<deploy_dir>
 
@@ -479,7 +529,7 @@ Constructs and returns a new Sqitch object. The supported parameters include:
 
 =head3 C<port>
 
-=head3 C<sql_dir>
+=head3 C<top_dir>
 
 =head3 C<deploy_dir>
 
@@ -622,10 +672,11 @@ C<STDOUT> if the exit code is 0, and to C<STDERR> if it is not 0.
 
 =over
 
-=item *
+=item * Eliminate use of C<fail()> and localize messages.
 
-Add checks to L<sqitch-add-step> to halt if a C<--requires> or C<--conflicts>
-step does not exist.
+=item * Add support for C<^> and other shortcuts when specifying changes.
+
+=item * Add an empty line after a new tag in C<Plan::tag()>.
 
 =back
 

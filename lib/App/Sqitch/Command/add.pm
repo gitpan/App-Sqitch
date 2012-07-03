@@ -1,10 +1,11 @@
-package App::Sqitch::Command::add_step;
+package App::Sqitch::Command::add;
 
 use v5.10.1;
 use strict;
 use warnings;
 use utf8;
 use Template::Tiny;
+use Locale::TextDomain qw(App-Sqitch);
 use Moose;
 use MooseX::Types::Path::Class;
 use Path::Class;
@@ -13,7 +14,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.31';
+our $VERSION = '0.50';
 
 has requires => (
     is       => 'ro',
@@ -35,7 +36,7 @@ has variables => (
     required => 1,
     lazy     => 1,
     default  => sub {
-        shift->sqitch->config->get_section( section => 'add-step.variables' );
+        shift->sqitch->config->get_section( section => 'add.variables' );
     },
 );
 
@@ -44,7 +45,7 @@ has template_directory => (
     isa     => 'Maybe[Path::Class::Dir]',
     lazy    => 1,
     default => sub {
-        dir shift->sqitch->config->get( key => "add-step.template_directory" );
+        dir shift->sqitch->config->get( key => "add.template_directory" );
     }
 );
 
@@ -55,7 +56,7 @@ for my $script (qw(deploy revert test)) {
         lazy    => 1,
         default => sub {
             shift->sqitch->config->get(
-                key => "add-step.with_$script",
+                key => "add.with_$script",
                 as  => 'bool',
             ) // 1;
         }
@@ -72,7 +73,7 @@ for my $script (qw(deploy revert test)) {
 sub _find {
     my ( $self, $script ) = @_;
     my $config = $self->sqitch->config;
-    $config->get( key => "add-step.$script\_template" ) || do {
+    $config->get( key => "add.$script\_template" ) || do {
         for my $dir (
             $self->template_directory,
             $config->user_dir->subdir('templates'),
@@ -122,7 +123,7 @@ sub configure {
 
         # Merge with config.
         $params{variables} = {
-            %{ $config->get_section( section => 'add-step.variables' ) },
+            %{ $config->get_section( section => 'add.variables' ) },
             %{ $vars },
         };
     }
@@ -134,63 +135,73 @@ sub execute {
     my ( $self, $name ) = @_;
     $self->usage unless defined $name;
     my $sqitch = $self->sqitch;
-
-    # Avoid if any of the scripts already exist.
-    my $fn = "$name." . $sqitch->extension;
-    $self->fail(qq{Step "$name" already exists}) if grep { -e $_->file($fn) } (
-        $sqitch->deploy_dir,
-        $sqitch->revert_dir,
-        $sqitch->test_dir,
+    my $plan   = $sqitch->plan;
+    my $change = $plan->add(
+        $name,
+        $self->requires,
+        $self->conflicts,
     );
 
     $self->_add(
         $name,
+        $change->deploy_file,
         $self->deploy_template,
-        $self->sqitch->deploy_dir,
     ) if $self->with_deploy;
 
     $self->_add(
         $name,
+        $change->revert_file,
         $self->revert_template,
-        $self->sqitch->revert_dir,
     ) if $self->with_revert;
 
     $self->_add(
         $name,
+        $change->test_file,
         $self->test_template,
-        $self->sqitch->test_dir,
     ) if $self->with_test;
 
+    # We good, write the plan file back out.
+    $plan->write_to( $sqitch->plan_file );
+    $self->info(__x(
+        'Added "{change}" to {file}',
+        change => $change->format_content,
+        file   => $sqitch->plan_file,
+    ));
     return $self;
 }
 
 sub _add {
-    my ( $self, $name, $in, $out_dir ) = @_;
-    make_path $out_dir, { error => \my $err };
+    my ( $self, $name, $file, $tmpl ) = @_;
+    if (-e $file) {
+        $self->info("Skipped $file: already exists");
+        return $self;
+    }
+
+    # Create the directory for the file, if it does not exist.
+    make_path $file->dir->stringify, { error => \my $err };
     if ( my $diag = shift @{ $err } ) {
         my ( $path, $msg ) = %{ $diag };
         $self->fail("Error creating $path: $msg") if $path;
         $self->fail($msg);
     }
 
-    my $out = $out_dir->file( "$name." . $self->sqitch->extension );
-    open my $fh, '>:utf8', $out or $self->fail("Cannot open $out: $!");
+    my $fh = $file->open('>:utf8') or $self->fail("Cannot open $file: $!");
     my $orig_selected = select;
     select $fh;
 
-    Template::Tiny->new->process( $self->_load($in), {
+    Template::Tiny->new->process( $self->_slurp($tmpl), {
         %{ $self->variables },
-        step      => $name,
+        change    => $name,
         requires  => $self->requires,
         conflicts => $self->conflicts,
     });
 
-    close $fh or $self->fail("Cannot close $out: $!");
+    close $fh or $self->fail("Cannot close $file: $!");
     select $orig_selected;
-    $self->info("Created $out");
+    $self->info("Created $file");
 }
 
-sub _load {
+sub _slurp {
     my ( $self, $tmpl ) = @_;
     open my $fh, "<:encoding(UTF-8)", $tmpl
         or $self->fail("cannot open $tmpl: $!");
@@ -204,16 +215,16 @@ __END__
 
 =head1 Name
 
-App::Sqitch::Command::add_step - Add a new deployment step
+App::Sqitch::Command::add - Add a new deployment change
 
 =head1 Synopsis
 
-  my $cmd = App::Sqitch::Command::add_step->new(%params);
+  my $cmd = App::Sqitch::Command::add->new(%params);
   $cmd->execute;
 
 =head1 Description
 
-Adds a new deployment step. This will result in the creation of a scripts in
+Adds a new deployment change. This will result in the creation of a scripts in
 the deploy, revert, and test directories. The scripts are based on
 L<Template::Tiny> templates in F<~/.sqitch/templates/> or
 C<$(etc_path)/templates>.
@@ -224,14 +235,14 @@ C<$(etc_path)/templates>.
 
 =head3 C<options>
 
-  my @opts = App::Sqitch::Command::add_step->options;
+  my @opts = App::Sqitch::Command::add->options;
 
 Returns a list of L<Getopt::Long> option specifications for the command-line
-options for the C<add_step> command.
+options for the C<add> command.
 
 =head3 C<configure>
 
-  my $params = App::Sqitch::Command::add_step->configure(
+  my $params = App::Sqitch::Command::add->configure(
       $config,
       $options,
   );
@@ -243,17 +254,17 @@ for the constructor.
 
 =head3 C<execute>
 
-  $add_step->execute($command);
+  $add->execute($command);
 
-Executes the C<add-step> command.
+Executes the C<add> command.
 
 =head1 See Also
 
 =over
 
-=item L<sqitch-add-step>
+=item L<sqitch-add>
 
-Documentation for the C<add-step> command to the Sqitch command-line client.
+Documentation for the C<add> command to the Sqitch command-line client.
 
 =item L<sqitch>
 

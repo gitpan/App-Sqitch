@@ -5,82 +5,39 @@ use strict;
 use warnings;
 use utf8;
 use Moose;
-require App::Sqitch::Plan;
+use Moose::Util::TypeConstraints;
 use List::Util qw(first);
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.31';
+our $VERSION = '0.50';
 
-has to => (
+has to_target => (
     is  => 'ro',
     isa => 'Str',
 );
 
-has with_untracked => (
-    is       => 'ro',
-    isa      => 'Bool',
-    required => 1,
-    default  => 0,
+has mode => (
+    is  => 'ro',
+    isa => enum([qw(
+        change
+        tag
+        all
+    )]),
+    default => 'all',
 );
 
 sub options {
     return qw(
-        to=s
-        with-untracked|untracked|u
+        to-target|to|target=s
+        mode=s
     );
 }
 
 sub execute {
-    my ( $self, $to ) = @_;
-    my $sqitch = $self->sqitch;
-    my $engine = $sqitch->engine;
-    my $plan   = App::Sqitch::Plan->new(
-        sqitch         => $sqitch,
-        with_untracked => $self->with_untracked
-    );
-
-    $to = $self->to if defined $self->to;
-    my $curr_tag = $engine->current_tag_name;
-    my $to_index = $plan->count - 1;
-
-    if (defined $to) {
-        # Make sure that $to is later than the current point.
-        $to_index = $plan->index_of($to);
-        if ($curr_tag) {
-            $plan->seek($curr_tag);
-            $sqitch->fail(
-                'Cannot deploy to an earlier tag; use "revert" instead'
-            ) if $to_index < $plan->position;
-
-            # Just return if there is nothing to do.
-            if ($to_index == $plan->position) {
-                $sqitch->info("Nothing to deploy (already at $to)");
-                return $self;
-            }
-        } else {
-            # Initialize the database, if necessary.
-            $engine->initialize unless $engine->initialized;
-        }
-
-    } elsif ($curr_tag) {
-        # Skip to the current tag.
-        $plan->seek($curr_tag);
-
-        if ($plan->position == $to_index) {
-            # We are up-to-date.
-            $sqitch->info('Nothing to deploy (up-to-date)');
-            return $self;
-        }
-
-    } else {
-        # Initialize the database, if necessary.
-        $engine->initialize unless $engine->initialized;
-    }
-
-    # Deploy!
-    $engine->deploy($plan->next) while $plan->position < $to_index;
-
+    my $self   = shift;
+    my $engine = $self->sqitch->engine;
+    $engine->deploy($self->to_target // shift, $self->mode);
     return $self;
 }
 

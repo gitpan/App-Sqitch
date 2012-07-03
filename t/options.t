@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 use utf8;
-use Test::More tests => 20;
+use Test::More tests => 25;
 #use Test::More 'no_plan';
 use Test::MockModule;
 use Capture::Tiny ':all';
@@ -83,7 +83,7 @@ HELP: {
 
 ##############################################################################
 # Try lots of options.
-is_deeply $CLASS->_parse_core_opts([
+my $opts = $CLASS->_parse_core_opts([
     '--plan-file'  => 'plan.txt',
     '--engine'     => 'pg',
     '--client'     => 'psql',
@@ -91,15 +91,18 @@ is_deeply $CLASS->_parse_core_opts([
     '--username'   => 'bob',
     '--host'       => 'local',
     '--port'       => 2020,
-    '--sql-dir'    => 'ddl',
+    '--top-dir'    => 'ddl',
     '--deploy-dir' => 'dep',
     '--revert-dir' => 'rev',
     '--test-dir'   => 'tst',
     '--extension'  => 'ext',
+    '--uri'        => 'https://github.com/theory/sqitch/',
     '--dry-run',
     '--verbose', '--verbose',
     '--quiet'
-]), {
+]);
+
+is_deeply $opts, {
     'plan_file'  => 'plan.txt',
     'engine'     => 'pg',
     'client'     => 'psql',
@@ -107,15 +110,23 @@ is_deeply $CLASS->_parse_core_opts([
     'username'   => 'bob',
     'host'       => 'local',
     'port'       => 2020,
-    'sql_dir'    => 'ddl',
+    'top_dir'    => 'ddl',
     'deploy_dir' => 'dep',
     'revert_dir' => 'rev',
     'test_dir'   => 'tst',
     'extension'  => 'ext',
+    'uri'        => 'https://github.com/theory/sqitch/',
     'dry_run'    => 1,
     verbosity    => 2,
     quiet        => 1,
 }, 'Should parse lots of options';
+
+# Make sure objects are created.
+isa_ok $opts->{uri}, 'URI', 'URI option';
+
+for my $dir (qw(top_dir deploy_dir revert_dir test_dir)) {
+    isa_ok $opts->{$dir}, 'Path::Class::Dir', $dir;
+}
 
 ##############################################################################
 # Try short options.

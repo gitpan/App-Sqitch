@@ -61,7 +61,8 @@ chdir 't';
 is_deeply $config->get_section(section => 'core'), {
     engine    => "pg",
     extension => "ddl",
-    sql_dir   => "migrations",
+    top_dir   => "migrations",
+    uri       => 'https://github.com/theory/sqitch/',
 }, 'get_section("core") should work';
 
 is_deeply $config->get_section(section => 'core.pg'), {

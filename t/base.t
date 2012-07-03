@@ -2,12 +2,15 @@
 
 use strict;
 use warnings;
-use Test::More tests => 79;
+use Test::More tests => 94;
 #use Test::More 'no_plan';
 use Test::MockModule;
 use Path::Class;
 use Test::Exception;
+use Test::NoWarnings;
 use Capture::Tiny ':all';
+use Locale::TextDomain qw(App-Sqitch);
+use App::Sqitch::X 'hurl';
 
 BEGIN {
     # Stub out exit.
@@ -25,6 +28,7 @@ can_ok $CLASS, qw(
     go
     new
     plan_file
+    plan
     engine
     _engine
     client
@@ -32,7 +36,7 @@ can_ok $CLASS, qw(
     username
     host
     port
-    sql_dir
+    top_dir
     deploy_dir
     revert_dir
     test_dir
@@ -57,14 +61,23 @@ for my $attr (qw(
     is $sqitch->$attr, undef, "$attr should be undef";
 }
 
-is $sqitch->plan_file, file('sqitch.plan'), 'Default plan file should be sqitch.plan';
+is $sqitch->plan_file, $sqitch->top_dir->file('sqitch.plan')->cleanup,
+    'Default plan file should be $top_dir/sqitch.plan';
 is $sqitch->verbosity, 1, 'verbosity should be 1';
 is $sqitch->dry_run, 0, 'dry_run should be 0';
 is $sqitch->extension, 'sql', 'Default extension should be sql';
-is $sqitch->sql_dir, dir('sql'), 'Default sql_dir should be ./sql';
-is $sqitch->deploy_dir, dir(qw(sql deploy)), 'Default deploy_dir should be ./sql/deploy';
-is $sqitch->revert_dir, dir(qw(sql revert)), 'Default revert_dir should be ./sql/revert';
-is $sqitch->test_dir, dir(qw(sql test)), 'Default test_dir should be ./sql/test';
+is $sqitch->top_dir, dir(), 'Default top_dir should be .';
+is $sqitch->deploy_dir, dir(qw(deploy)), 'Default deploy_dir should be ./sql/deploy';
+is $sqitch->revert_dir, dir(qw(revert)), 'Default revert_dir should be ./sql/revert';
+is $sqitch->test_dir, dir(qw(test)), 'Default test_dir should be ./sql/test';
+isa_ok $sqitch->plan, 'App::Sqitch::Plan';
+throws_ok { $sqitch->uri } 'App::Sqitch::X',
+    'Should get error for missing URI';
+is $@->ident, 'core', 'Should be a "core" exception';
+is $@->message, __x(
+    'Missing project URI. Run {command} to add a URI',
+    command => '`sqitch config core.uri URI`'
+), 'Should have localized error message about missing URI';
 
 ##############################################################################
 # Test go().
@@ -91,6 +104,38 @@ GO: {
         'Should have local config overriding user';
     is $config->get(key => 'core.pg.host'), 'localhost',
         'Should fall back on user config';
+    is $sqitch->uri, URI->new('https://github.com/theory/sqitch/'),
+        'Should read URI from config file';
+
+    # Now make it die.
+    sub puke { App::Sqitch::X->new(@_) } # Ensures we have trace frames.
+    my $ex = puke(ident => 'ohai', message => 'OMGWTF!');
+    $mock->mock(execute => sub { die $ex });
+    my $sqitch_mock = Test::MockModule->new($CLASS);
+    my @vented;
+    $sqitch_mock->mock(vent => sub { push @vented => $_[1]; });
+    my $traced;
+    $sqitch_mock->mock(trace => sub { $traced = $_[1]; });
+    is $sqitch->go, 2, 'Go should return 2 on Sqitch exception';
+    is_deeply \@vented, ['OMGWTF!'], 'The error should have been vented';
+    is $traced, $ex->stack_trace->as_string,
+        'The stack trace should have been sent to trace';
+
+    # Make it die with a developer exception.
+    @vented = ();
+    $traced = undef;
+    $ex = puke( message => 'OUCH!', exitval => 4 );
+    is $sqitch->go, 4, 'Go should return exitval on another exception';
+    is_deeply \@vented, ['OUCH!', $ex->stack_trace->as_string],
+        'Both the message and the trace should have been vented';
+    is $traced, undef, 'Nothing should have been traced';
+
+    # Make it die without an exception object.
+    $ex = 'LOLZ';
+    @vented = ();
+    is $sqitch->go, 2, 'Go should return 2 on a third Sqitch exception';
+    is @vented, 1, 'Should have one thing vented';
+    like $vented[0], qr/^LOLZ\b/, 'And it should include our message';
 }
 
 ##############################################################################

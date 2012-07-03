@@ -2,28 +2,36 @@ package App::Sqitch::Engine;
 
 use v5.10.1;
 use Moose;
+use strict;
 use utf8;
 use Try::Tiny;
+use Locale::TextDomain qw(App-Sqitch);
+use App::Sqitch::X qw(hurl);
 use namespace::autoclean;
 
-our $VERSION = '0.31';
+our $VERSION = '0.50';
 
 has sqitch => (
     is       => 'ro',
     isa      => 'App::Sqitch',
     required => 1,
-    handles  => { target => 'db_name' },
+    handles  => { destination => 'db_name' },
+);
+
+has start_at => (
+    is  => 'rw',
+    isa => 'Str'
 );
 
 sub load {
     my ( $class, $p ) = @_;
 
     # We should have a command.
-    die 'Missing "engine" parameter to load()' unless $p->{engine};
+    hurl 'Missing "engine" parameter to load()' unless $p->{engine};
 
     # Load the engine class.
     my $pkg = __PACKAGE__ . "::$p->{engine}";
-    eval "require $pkg" or die $@;
+    eval "require $pkg" or hurl "Unable to load $pkg";
     return $pkg->new( sqitch => $p->{sqitch} );
 }
 
@@ -37,6 +45,295 @@ sub name {
 
 sub config_vars { return }
 
+sub deploy {
+    my ( $self, $to, $mode ) = @_;
+    my $sqitch   = $self->sqitch;
+    my $plan     = $self->_sync_plan;
+    my $to_index = $plan->count - 1;
+
+    hurl plan => __ 'Nothing to deploy (empty plan)' if $to_index < 0;
+
+    if (defined $to) {
+        $to_index = $plan->index_of($to) // hurl plan => __x(
+            'Unknown deploy target: "{target}"',
+            target => $to,
+        );
+
+        # Just return if there is nothing to do.
+        if ($to_index == $plan->position) {
+            $sqitch->info(__x(
+                'Nothing to deploy (already at "{target}"',
+                target => $to
+            ));
+            return $self;
+        }
+    }
+
+    if ($plan->position == $to_index) {
+        # We are up-to-date.
+        hurl {
+            ident   => 'deploy',
+            message => __ 'Nothing to deploy (up-to-date)',
+            exitval => 1,
+        };
+
+    } elsif ($plan->position == -1) {
+        # Initialize the database, if necessary.
+        unless ($self->initialized) {
+            $sqitch->info(__x(
+                'Adding metadata tables to {destination}',
+                destination => $self->destination,
+            ));
+            $self->initialize;
+        }
+
+    } else {
+        # Make sure that $to_index is greater than the current point.
+        hurl deploy => __ 'Cannot deploy to an earlier target; use "revert" instead'
+            if $to_index < $plan->position;
+    }
+
+    $sqitch->info(
+        defined $to ? __x(
+            'Deploying changes through {target} to {destination}',
+            destination => $self->destination,
+            target      => $to
+        ) : __x(
+            'Deploying changes to {destination}',
+            destination => $self->destination,
+        )
+    );
+
+    $mode ||= 'all';
+    my $meth = $mode eq 'change' ? '_deploy_by_change'
+             : $mode eq 'tag'  ? '_deploy_by_tag'
+             : $mode eq 'all'  ? '_deploy_all'
+             : hurl deploy => __x 'Unknown deployment mode: "{mode}"', mode => $mode;
+    ;
+
+    $self->$meth($plan, $to_index);
+}
+
+sub revert {
+    my ( $self, $to ) = @_;
+    my $sqitch = $self->sqitch;
+    my $plan   = $self->sqitch->plan;
+
+    my @change_ids;
+
+    if (defined $to) {
+        my $change = $plan->get($to) // hurl revert => __x(
+            'Unknown revert target: "{target}"',
+            target => $to,
+        );
+
+        @change_ids = $self->deployed_change_ids_since($change) or hurl revert => __x(
+            'Target not deployed: "{target}"',
+            target => $to,
+        );
+
+        $sqitch->info(__x(
+            'Reverting from {destination} to {target}',
+            destination => $self->destination,
+            target      => $to
+        ));
+    } else {
+        @change_ids = $self->deployed_change_ids or hurl {
+            ident   => 'revert',
+            message => __ 'Nothing to revert (nothing deployed)',
+            exitval => 1,
+        };
+        $sqitch->info(__x(
+            'Reverting all changes from {destination}',
+            destination => $self->destination,
+        ));
+    }
+
+    # Get the list of changes to revert before we do actual work.
+    my @changes = map {
+        $plan->get($_) or do {
+            my $name = $self->name_for_change_id($_);
+            $plan->get($name) or hurl revert => __x(
+                'Could not find change "{change}" ({id}) in the plan',
+                change => $self->name_for_change_id($_),
+                id => $_,
+            );
+        };
+    } reverse @change_ids;
+
+    # Do we want to support modes, where failures would re-deploy to previous
+    # tag or all the way back to the starting point? This would be very much
+    # like deploy() mode. I'm thinking not, as a failure on a revert is not
+    # something you generaly want to recover from by deploying back to where
+    # you started. But maybe I'm wrong?
+    $self->revert_change($_) for @changes;
+
+    return $self;
+}
+
+sub _deploy_by_change {
+    my ( $self, $plan, $to_index ) = @_;
+
+    # Just deploy each change. If any fails, we just stop.
+    while ($plan->position < $to_index) {
+        $self->deploy_change($plan->next);
+    }
+
+    return $self;
+}
+
+sub _rollback {
+    my ($self, $tagged) = (shift, shift);
+    my $sqitch = $self->sqitch;
+
+    if (my @run = reverse @_) {
+        $tagged = $tagged ? $tagged->format_name_with_tags : $self->start_at;
+        $sqitch->vent(
+            $tagged ? __x('Reverting to {target}', target => $tagged)
+                 : __ 'Reverting all changes'
+        );
+
+        try {
+            $self->revert_change($_) for @run;
+        } catch {
+            # Sucks when this happens.
+            $sqitch->vent(eval { $_->message } // $_);
+            $sqitch->vent(__ 'The schema will need to be manually repaired');
+        };
+    }
+
+    hurl deploy => __ 'Deploy failed';
+}
+
+sub _deploy_by_tag {
+    my ( $self, $plan, $to_index ) = @_;
+
+    my ($last_tagged, @run);
+    try {
+        while ($plan->position < $to_index) {
+            my $change = $plan->next;
+            $self->deploy_change($change);
+            push @run => $change;
+            if ($change->tags) {
+                @run = ();
+                $last_tagged = $change;
+            }
+        }
+    } catch {
+        $self->sqitch->vent(eval { $_->message } // $_);
+        $self->_rollback($last_tagged, @run);
+    };
+
+    return $self;
+}
+
+sub _deploy_all {
+    my ( $self, $plan, $to_index ) = @_;
+
+    my @run;
+    try {
+        while ($plan->position < $to_index) {
+            my $change = $plan->next;
+            $self->deploy_change($change);
+            push @run => $change;
+        }
+    } catch {
+        $self->sqitch->vent(eval { $_->message } // $_);
+        $self->_rollback(undef, @run);
+    };
+
+    return $self;
+}
+
+sub _sync_plan {
+    my $self = shift;
+    my $plan = $self->sqitch->plan;
+
+    if (my $id = $self->latest_change_id) {
+        my $idx = $plan->index_of($id) // hurl plan => __x(
+            'Cannot find {target} in the plan',
+            target => $id
+        );
+        $plan->position($idx);
+        my $change = $plan->get($id);
+        if (my @tags = $change->tags) {
+            $self->start_at( $change->format_name . $tags[-1]->format_name );
+        } else {
+            $self->start_at( $change->format_name );
+        }
+    } else {
+        $plan->reset;
+    }
+    return $plan;
+}
+
+sub is_deployed {
+    my ($self, $thing) = @_;
+    return $thing->isa('App::Sqitch::Plan::Tag')
+        ? $self->is_deployed_tag($thing)
+        : $self->is_deployed_change($thing);
+}
+
+sub deploy_change {
+    my ( $self, $change ) = @_;
+    my $sqitch = $self->sqitch;
+    $sqitch->info('  + ', $change->format_name_with_tags);
+    $self->begin_work;
+
+    # Check for conflicts.
+    if (my @conflicts = $self->check_conflicts($change)) {
+        hurl deploy => __nx(
+            'Conflicts with previously deployed change: {changes}',
+            'Conflicts with previously deployed changes: {changes}',
+            scalar @conflicts,
+            changes => join ' ', @conflicts,
+        )
+    }
+
+    # Check for dependencies.
+    if (my @required = $self->check_requires($change)) {
+        hurl deploy => __nx(
+            'Missing required change: {changes}',
+            'Missing required changes: {changes}',
+            scalar @required,
+            changes => join ' ', @required,
+        );
+    }
+
+    return try {
+        $self->run_file($change->deploy_file);
+        $self->log_deploy_change($change);
+    } finally {
+        $self->finish_work;
+    } catch {
+        $self->log_fail_change($change);
+        die $_;
+    }
+}
+
+sub revert_change {
+    my ( $self, $change ) = @_;
+    $self->sqitch->info('  - ', $change->format_name_with_tags);
+    $self->begin_work;
+    try {
+        $self->run_file($change->revert_file);
+        $self->log_revert_change($change);
+    } finally {
+        $self->finish_work;
+    } catch {
+        die $_;
+    }
+}
+
+sub begin_work  { shift }
+sub finish_work { shift }
+
+sub latest_change {
+    my $self = shift;
+    my $change_id = $self->latest_change_id // return undef;
+    return $self->sqitch->plan->get( $change_id );
+}
+
 sub initialized {
     my $class = ref $_[0] || $_[0];
     require Carp;
@@ -47,161 +344,6 @@ sub initialize {
     my $class = ref $_[0] || $_[0];
     require Carp;
     Carp::confess( "$class has not implemented initialize()" );
-}
-
-sub _rollback_steps {
-    my $self   = shift;
-    my $tag    = shift;
-    my @steps  = @_;
-    my $sqitch = $self->sqitch;
-    $sqitch->vent('Reverting previous steps for tag ', $tag->name)
-        if @steps;
-
-    try {
-        for my $step (reverse @steps) {
-            $sqitch->info('  - ', $step->name);
-            $self->revert_step($step);
-        }
-        $self->rollback_deploy_tag($tag);
-    } catch {
-        # Sucks when this happens.
-        # XXX Add message about state corruption?
-        $sqitch->debug($_);
-        $sqitch->vent(
-            'Error rolling back ', $tag->name, $/,
-            'The schema will need to be manually repaired'
-        );
-    };
-
-    return $self;
-}
-
-sub deploy {
-    my ($self, $tag) = @_;
-    my $sqitch = $self->sqitch;
-
-    return $sqitch->info(
-        'Tag ', $tag->name, ' already deployed to ', $self->target
-    ) if $self->is_deployed_tag($tag);
-
-    return $sqitch->warn('Tag ', $tag->name, ' has no steps; skipping')
-        unless $tag->steps;
-
-    $sqitch->info('Deploying ', $tag->name, ' to ', $self->target);
-
-    my @run;
-    try {
-        $self->begin_deploy_tag($tag);
-        for my $step ($tag->steps) {
-            if ( $self->is_deployed_step($step) ) {
-                $sqitch->info('    ', $step->name, ' already deployed');
-                next;
-            }
-            $sqitch->info('  + ', $step->name);
-
-            # Check for conflicts.
-            if (my @conflicts = $self->check_conflicts($step)) {
-                my $pl = @conflicts > 1 ? 's' : '';
-                $sqitch->vent(
-                    "Conflicts with previously deployed step$pl: ",
-                    join ' ', @conflicts
-                );
-                $self->_rollback_steps($tag, @run);
-                $sqitch->fail( 'Aborting deployment of ', $tag->name );
-            }
-
-            # Check for prerequisites.
-            if (my @required = $self->check_requires($step)) {
-                my $pl = @required > 1 ? 's' : '';
-                $sqitch->vent(
-                    "Missing required step$pl: ",
-                    join ' ', @required
-                );
-                $self->_rollback_steps($tag, @run);
-                $sqitch->fail( 'Aborting deployment of ', $tag->name );
-            }
-
-            # Go for it.
-            try {
-                $self->deploy_step($step);
-                push @run => $step;
-            } catch {
-                # Ruh-roh.
-                $self->log_fail_step($step);
-                die $_;
-            };
-        }
-        $self->commit_deploy_tag($tag);
-    } catch {
-        # Whoops! Revert completed steps.
-        $sqitch->debug($_);
-        $self->_rollback_steps($tag, @run);
-        $sqitch->fail( 'Aborting deployment of ', $tag->name );
-    };
-
-    return $self;
-}
-
-sub revert {
-    my ($self, $tag) = @_;
-    my $sqitch = $self->sqitch;
-
-    return $sqitch->info(
-        'Tag ', $tag->name, ' is not deployed to ', $self->target
-    ) unless $self->is_deployed_tag($tag);
-
-    $sqitch->info('Reverting ', $tag->name, ' from ', $self->target);
-
-    try {
-        $self->begin_revert_tag($tag);
-    } catch {
-        $sqitch->debug($_);
-        $sqitch->fail( 'Aborting reversion of ', $tag->name );
-    };
-
-    # Revert only deployed steps.
-    for my $step ( reverse $self->deployed_steps_for($tag) ) {
-        $sqitch->info('  - ', $step->name);
-        try {
-            $self->revert_step($step);
-        } catch {
-            # Whoops! We're fucked.
-            # XXX do something to mark the state as corrupted.
-            $sqitch->debug($_);
-            $sqitch->fail(
-                'Error reverting step ', $step->name, $/,
-                'The schema will need to be manually repaired'
-            );
-        };
-    }
-
-    try {
-        $self->commit_revert_tag($tag);
-    } catch {
-        $sqitch->debug($_);
-        $sqitch->fail( "Error removing tag ", $tag->name );
-    };
-
-    return $self;
-}
-
-sub is_deployed {
-    my ($self, $thing) = @_;
-    return $thing->isa('App::Sqitch::Plan::Tag')
-        ? $self->is_deployed_tag($thing)
-        : $self->is_deployed_step($thing);
-}
-
-sub deploy_step {
-    my ( $self, $step ) = @_;
-    $self->run_file($step->deploy_file);
-    $self->log_deploy_step($step);
-}
-
-sub revert_step {
-    my ( $self, $step ) = @_;
-    $self->run_file($step->revert_file);
-    $self->log_revert_step($step);
 }
 
 sub run_file {
@@ -216,52 +358,22 @@ sub run_handle {
     Carp::confess( "$class has not implemented run_handle()" );
 }
 
-sub log_deploy_step {
+sub log_deploy_change {
     my $class = ref $_[0] || $_[0];
     require Carp;
-    Carp::confess( "$class has not implemented log_deploy_step()" );
+    Carp::confess( "$class has not implemented log_deploy_change()" );
 }
 
-sub log_fail_step {
+sub log_fail_change {
     my $class = ref $_[0] || $_[0];
     require Carp;
-    Carp::confess( "$class has not implemented log_fail_step()" );
+    Carp::confess( "$class has not implemented log_fail_change()" );
 }
 
-sub log_revert_step {
+sub log_revert_change {
     my $class = ref $_[0] || $_[0];
     require Carp;
-    Carp::confess( "$class has not implemented log_revert_step()" );
-}
-
-sub begin_deploy_tag {
-    my $class = ref $_[0] || $_[0];
-    require Carp;
-    Carp::confess( "$class has not implemented begin_deploy_tag()" );
-}
-
-sub commit_deploy_tag {
-    my $class = ref $_[0] || $_[0];
-    require Carp;
-    Carp::confess( "$class has not implemented commit_deploy_tag()" );
-}
-
-sub rollback_deploy_tag {
-    my $class = ref $_[0] || $_[0];
-    require Carp;
-    Carp::confess( "$class has not implemented rollback_deploy_tag()" );
-}
-
-sub begin_revert_tag {
-    my $class = ref $_[0] || $_[0];
-    require Carp;
-    Carp::confess( "$class has not implemented begin_revert_tag()" );
-}
-
-sub commit_revert_tag {
-    my $class = ref $_[0] || $_[0];
-    require Carp;
-    Carp::confess( "$class has not implemented commit_revert_tag()" );
+    Carp::confess( "$class has not implemented log_revert_change()" );
 }
 
 sub is_deployed_tag {
@@ -270,16 +382,10 @@ sub is_deployed_tag {
     Carp::confess( "$class has not implemented is_deployed_tag()" );
 }
 
-sub is_deployed_step {
+sub is_deployed_change {
     my $class = ref $_[0] || $_[0];
     require Carp;
-    Carp::confess( "$class has not implemented is_deployed_step()" );
-}
-
-sub deployed_steps_for {
-    my $class = ref $_[0] || $_[0];
-    require Carp;
-    Carp::confess( "$class has not implemented deployed_steps_for()" );
+    Carp::confess( "$class has not implemented is_deployed_change()" );
 }
 
 sub check_requires {
@@ -294,10 +400,28 @@ sub check_conflicts {
     Carp::confess( "$class has not implemented check_conflicts()" );
 }
 
-sub current_tag_name {
+sub latest_change_id {
     my $class = ref $_[0] || $_[0];
     require Carp;
-    Carp::confess( "$class has not implemented current_tag_name()" );
+    Carp::confess( "$class has not implemented latest_change_id()" );
+}
+
+sub deployed_change_ids {
+    my $class = ref $_[0] || $_[0];
+    require Carp;
+    Carp::confess( "$class has not implemented deployed_change_ids()" );
+}
+
+sub deployed_change_ids_since {
+    my $class = ref $_[0] || $_[0];
+    require Carp;
+    Carp::confess( "$class has not implemented deployed_change_ids_since()" );
+}
+
+sub name_for_change_id {
+    my $class = ref $_[0] || $_[0];
+    require Carp;
+    Carp::confess( "$class has not implemented name_for_change_id()" );
 }
 
 __PACKAGE__->meta->make_immutable;
@@ -399,54 +523,107 @@ The name of the engine. Defaults to the last part of the package name, so as a
 rule you should not need to override it, since it is that string that Sqitch
 uses to find the engine class.
 
-=head3 C<target>
+=head3 C<destination>
 
-  my $target = $engine->target;
+  my $destination = $engine->destination;
 
-Returns the name of the target database. This will usually be the same as the
-configured database name or the value of the C<--db-name> option. Hover,
+Returns the name of the destination database. This will usually be the same as
+the configured database name or the value of the C<--db-name> option. Hover,
 subclasses may override it to provide other values, such as when neither of
 the above have values but there is nevertheless a default value assumed by the
-engine. Used internally by C<deploy()> and C<revert()> in status messages.
+engine. Used internally to name the destination in status messages.
 
 =head3 C<deploy>
 
-  $engine->deploy($tag);
+  $engine->deploy($to_target);
+  $engine->deploy($to_target, $mode);
 
-Deploys the L<App::Sqitch::Plan::Tag> to the database, including all of its
-associated steps.
+Deploys changes to the destination database, starting with the current
+deployment state, and continuing to C<$to_target>. C<$to_target> must be a
+valid target specification as passable to the C<index_of()> method of
+L<App::Sqitch::Plan>. If C<$to_target> is not specified, all changes will be
+applied.
 
-=head3 C<deploy_step>
+The second argument specifies the reversion mode in the case of deployment
+failure. The allowed values are:
 
-  $engine->deploy_step($step);
+=over
 
-Used internally by C<deploy()> to deploy an individual step.
+=item C<all>
+
+In the event of failure, revert all deployed changes, back to the point at
+which deployment started. This is the default.
+
+=item C<tag>
+
+In the event of failure, revert all deployed changes to the last
+successfully-applied tag. If no tags were applied during this deployment, all
+changes will be reverted to the pint at which deployment began.
+
+=item C<change>
+
+In the event of failure, no changes will be reverted. This is on the
+assumption that a change failure is total, and the change may be applied again.
+
+=back
+
+Note that, in the event of failure, if a reversion fails, the destination
+database B<may be left in a corrupted state>. Write your revert scripts
+carefully!
 
 =head3 C<revert>
 
   $engine->revert($tag);
 
 Reverts the L<App::Sqitch::Plan::Tag> from the database, including all of its
-associated steps.
+associated changes.
 
-=head3 C<revert_step>
+=head3 C<deploy_change>
 
-  $engine->revert_step($step);
+  $engine->deploy_change($change);
+
+Used internally by C<deploy()> to deploy an individual change.
+
+=head3 C<revert_change>
+
+  $engine->revert_change($change);
 
 Used internally by C<revert()> (and, by C<deploy()> when a deploy fails) to
-revert an individual step.
+revert an individual change.
 
 =head3 C<is_deployed>
 
   say "Tag deployed"  if $engine->is_deployed($tag);
-  say "Step deployed" if $engine->is_deployed($step);
+  say "Change deployed" if $engine->is_deployed($change);
 
 Convenience method that dispatches to C<is_deployed_tag()> or
-C<is_deployed_step()> as appropriate to its argument.
+C<is_deployed_change()> as appropriate to its argument.
+
+=head3 C<latest_change>
+
+  my $change = $engine->latest_change;
+
+Returns the L<App::Sqitch::Plan::Change> object representing the most recently
+applied change.
 
 =head2 Abstract Instance Methods
 
 These methods must be overridden in subclasses.
+
+=head3 C<begin_work>
+
+  $engine->begin_work;
+
+This method is called just before a change is deployed or reverted. It should
+create a lock to prevent any other processes from making changes to the
+database, to be freed in C<finish_work>.
+
+=head3 C<finish_work>
+
+  $engine->finish_work;
+
+This method is called after a change has been deployed or reverted. It should
+unlock the lock created by C<begin_work>.
 
 =head3 C<initialized>
 
@@ -470,97 +647,86 @@ an exception
 Should return true if the tag has been deployed to the database, and false if
 it has not.
 
-=head3 C<is_deployed_step>
+=head3 C<is_deployed_change>
 
-  say "Step deployed"  if $engine->is_deployed_step($step);
+  say "Change deployed"  if $engine->is_deployed_change($change);
 
-Should return true if the step has been deployed to the database, and false if
+Should return true if the change has been deployed to the database, and false if
 it has not.
 
-=head3 C<begin_deploy_tag>
+=head3 C<log_deploy_change>
 
-  $engine->begin_deploy_tag($tag);
-
-Start deploying the tag. The engine may need to write the tag to the database,
-create locks to control the deployment, etc.
-
-=head3 C<commit_deploy_tag>
-
-  $engine->commit_deploy_tag($tag);
-
-Commit a tag deployment. The engine should clean up anything started in
-C<begin_deploy_tag()>.
-
-=head3 C<rollback_deploy_tag>
-
-  $engine->rollback_deploy_tag($tag);
-
-Roll back a tag deployment. The engine should remove the tag record and commit
-its changes.
-
-=head3 C<log_deploy_step>
-
-  $engine->log_deploy_step($step);
+  $engine->log_deploy_change($change);
 
 Should write to the database metadata and history the records necessary to
-indicate that the step has been deployed.
+indicate that the change has been deployed.
 
-=head3 C<log_fail_step>
+=head3 C<log_fail_change>
 
-  $engine->log_fail_step($step);
+  $engine->log_fail_change($change);
 
 Should write to the database event history a record reflecting that deployment
-of the step failed.
+of the change failed.
 
-=head3 C<begin_revert_tag>
+=head3 C<log_revert_change>
 
-  $engine->begin_revert_tag($tag);
-
-Start reverting the tag. The engine may need to update the database, create
-locks to control the reversion, etc.
-
-=head3 C<commit_revert_tag>
-
-  $engine->commit_revert_tag($tag);
-
-Commit a tag reversion. The engine should clean up anything started in
-C<begin_revert_tag()>.
-
-=head3 C<log_revert_step>
-
-  $engine->log_revert_step($step);
+  $engine->log_revert_change($change);
 
 Should write to and/or remove from the database metadata and history the
-records necessary to indicate that the step has been reverted.
+records necessary to indicate that the change has been reverted.
 
 =head3 C<check_requires>
 
-  if ( my @requires = $engine->requires($step) ) {
-      die "Step requires undeployed steps: @requires\n";
+  if ( my @requires = $engine->requires($change) ) {
+      die "Change requires undeployed changes: @requires\n";
   }
 
-Returns the names of any steps required by the specified step that are not
+Returns the names of any changes required by the specified change that are not
 currently deployed to the database. If none are returned, the requirements are
-presumed to be satisfied.
+presumed to be satisfied. The engine implementation should compare changes by
+their IDs.
 
 =head3 C<check_conflicts>
 
-  if ( my @conflicts = $engine->conflicts($step) ) {
-      die "Step conflicts with previously deployed steps: @conflicts\n";
+  if ( my @conflicts = $engine->conflicts($change) ) {
+      die "Change conflicts with previously deployed changes: @conflicts\n";
   }
 
-Returns the names of any currently-deployed steps that conflict with specified
-step. If none are returned, there are presumed to be no conflicts.
+Returns the names of any currently-deployed changes that conflict with specified
+change. If none are returned, there are presumed to be no conflicts.
 
-If any of the steps that conflict with the specified step have been deployed
+If any of the changes that conflict with the specified change have been deployed
 to the database, their names should be returned by this method. If no names
-are returned, it's because there are no conflicts.
+are returned, it's because there are no conflicts. The engine implementation
+should compare changes by their IDs.
 
-=head3 C<current_tag_name>
+=head3 C<latest_change_id>
 
-  my $tag_name $engine->current_tag_name;
+  my $change_id = $engine->latest_change_id;
 
-Returns one tag name from the most recently deployed tag.
+Returns the ID of the most recently applied change.
+
+=head3 C<deployed_change_ids>
+
+  my @change_ids = $engine->deployed_change_ids;
+
+Returns a list of all deployed change IDs in the order in which they were deployed.
+
+=head3 C<deployed_change_ids_since>
+
+  my @change_ids = $engine->deployed_change_ids_since($change);
+
+Returns a list of change IDs for changes deployed after the specified change.
+
+=head3 C<name_for_change_id>
+
+  my $change_name = $engine->name_for_change_id($change_id);
+
+Returns the name of the change identified by the ID argument. If a tag was
+applied to a change after that change, the name will be returned with the tag
+qualification, e.g., C<app_user@beta>. This value should be suitable for
+uniquely identifying the change, and passing to the C<get> or C<index_of>
+methods of L<App::Sqitch::Plan>.
 
 =head3 C<run_file>
 
@@ -575,13 +741,6 @@ SQL file to run through the engine's native client.
 
 Should execute the commands in the specified file handle. The file handle's
 contents should be piped to the engine's native client.
-
-=head3 C<deployed_steps_for>
-
-  my @steps = $engine->deployed_steps_for($tag);
-
-Should return a list of steps currently deployed to the database for the
-specified tag, in an order appropriate to satisfy dependencies.
 
 =head1 See Also
 

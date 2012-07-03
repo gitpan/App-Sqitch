@@ -135,12 +135,12 @@ is $cmd->feathers, 'no', 'The "feathers" attribute should be set';
 
 # Test command with a dash in its name.
 ok $cmd = $CLASS->load({
-    command => 'add-step',
+    command => 'add',
     sqitch  => $sqitch,
     config  => $config,
-}), 'Load an "add-step" command';
-isa_ok $cmd, "$CLASS\::add_step", 'It';
-is $cmd->command, 'add-step', 'command() should return hyphenated name';
+}), 'Load an "add" command';
+isa_ok $cmd, "$CLASS\::add", 'It';
+is $cmd->command, 'add', 'command() should return hyphenated name';
 
 ##############################################################################
 # Test command and execute.

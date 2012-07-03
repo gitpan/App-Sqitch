@@ -4,60 +4,122 @@ sqitch-deploy - Deploy changes to a database
 
 =head1 Synopsis
 
-  sqitch [options] deploy [--with-untracked]
-  sqitch [options] deploy [--with-untracked] <tag>
-  sqitch [options] deploy [--with-untracked] --to <tag>
+  sqitch [options] deploy
+  sqitch [options] deploy <target>
+  sqitch [options] deploy --to-target <target>
 
 =head1 Description
 
 Deploy changes to the database. Changes will begin from the current deployment
-state. They will run to the latest tag, unless a target tag is specified,
-either via C<--to> or with no option flag, in which case changes will be
-deployed up-to and including that tag.
+state. They will run to the latest change, unless a target is specified, either
+via C<--to> or with no option flag, in which case changes will be deployed
+up-to and including that target.
 
-If the database it up-to-date, no changes will be made. If a tag is specified
-that appears earlier in the plan than the currently-deployed tag, an error
-will be returned, along with a suggestion to instead use L<sqitch-revert>.
+If the database it up-to-date or already deployed to the specified target, no
+changes will be made. If the target appears earlier in the plan than the
+currently-deployed state, an error will be returned, along with a suggestion
+to instead use L<sqitch-revert>.
 
-=begin comment
-
-This is a to-do.
-
-=head1 Specifying Tags
-
-A C<< <tag> >> option typically, but not necessarily, names a tag object.
+=head1 Options
 
 =over
 
-=item C<tag>, e.g, C<beta>
+=item C<--to-target>
 
-A tag name.
+=item C<--target>
 
-=item C<HEAD>
+=item C<--to>
 
-Special symbolic tag for the last tag in the plan. Typically omitted.
+Specify the deployment target. Defaults to the last point in the plan.
 
-=item C<HEAD+>
+=item C<--mode>
 
-The last tag in the plan plus any untracked steps.
+Specify the reversion mode to use in case of failure. Possible values are:
 
-=item C<< <tag>^ >>, e.g., C<HEAD^^>, C<foo^3>
+=over
 
-A suffix C<^> to a symbolic or actual tag name means the tag I<prior> to that
-tag object. Multiple C<^>s indicate multiple prior tags. These can also be
-written as C<< ^<n> >>, where C<< <n> >> represents the number of earlier tags
-to go back.
+=item C<all>
 
-=item C<< <tag>+ >>, e.g., C<HEAD+>, C<foo++>, C<bar+4>
+In the event of failure, revert all deployed changes, back to the point at
+which deployment started. This is the default.
 
-A suffix C<+> to a symbolic or actual tag names that means the tag I<after>
-that tag object. Multiple C<+>s indicate multiple prior tags. These can also
-be written as C<< +<n> >>, where C<< <n> >> represents the number of later
-tags to go forward.
+=item C<tag>
+
+In the event of failure, revert all deployed changes to the last
+successfully-applied tag. If no tags were applied during this deployment, all
+changes will be reverted to the pint at which deployment began.
+
+=item C<change>
+
+In the event of failure, no changes will be reverted. This is on the
+assumption that a change failure is total, and the change may be applied again.
 
 =back
 
+=back
+
+=head1 Configuration Variables
+
+=over
+
+=item C<deploy.to_target>
+
+Target to deploy to. You probably don't want to set this.
+
+=item C<deploy.mode>
+
+Deploy mode. The supported values are the same as for the C<--mode> option.
+
+=back
+
+=head1 Specifying Targets
+
+A C<< <target> >> option typically, but not necessarily, names a target object.
+
+=over
+
+=item C<change>, e.g, C<users_table>
+
+A change name.
+
+=item C<< @<tag> >>, e.g, C<@beta>
+
+A tag name.
+
+=item C<< <change>@<tag> >>, e.g, C<users_table@beta>
+
+A change as of the specified tag. Probably more useful, in general, just to
+deploy to the tag.
+
+=begin comment
+
+These are not yet implemented.
+
+=item C<HEAD>
+
+Special symbolic name for the last change in the plan. Typically omitted.
+
+=item C<ROOT>
+
+Special symbolic name for the first change in the plan. Typically omitted.
+
+=item C<< <target>^ >>, e.g., C<HEAD^^>, C<users_table^3>, C<@beta^2>
+
+A suffix C<^> to a symbolic or actual name means the change I<prior> to that
+target. Multiple C<^>s indicate multiple prior changes. These can also be
+written as C<< ^<n> >>, where C<< <n> >> represents the number of changes to go
+back.
+
+=item C<< <target>+ >>, e.g., C<ROOT+>, C<foo++>, C<@bar+4>
+
+A suffix C<+> to a symbolic or actual target name that means the change I<after>
+that target. Multiple C<+>s indicate multiple prior changes. These can also be
+written as C<< +<n> >>, where C<< <n> >> represents the number of changes to go
+forward.
+
 =end comment
+
+=back
 
 =head1 Sqitch
 
