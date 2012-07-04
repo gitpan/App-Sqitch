@@ -4,12 +4,13 @@ use v5.10.1;
 use strict;
 use warnings;
 use utf8;
-use Carp;
 use Try::Tiny;
+use Locale::TextDomain qw(App-Sqitch);
+use App::Sqitch::X qw(hurl);
 use Hash::Merge 'merge';
 use Moose;
 
-our $VERSION = '0.50';
+our $VERSION = '0.51';
 
 has sqitch => (
     is       => 'ro',
@@ -26,10 +27,6 @@ has sqitch => (
         comment
         emit
         warn
-        unfound
-        fail
-        help
-        bail
     )],
 );
 
@@ -60,7 +57,14 @@ sub load {
         die $_ unless /^Can't locate/;
 
         # Suggest help if it's not a valid command.
-        $p->{sqitch}->help(qq{"$cmd" is not a valid command.});
+        hurl {
+            ident   => 'command',
+            exitval => 1,
+            message => __x(
+                '"{command}" is not a valid command',
+                command => $cmd,
+            ),
+        };
     };
 
     # Merge the command-line options and configuration parameters
@@ -135,12 +139,12 @@ sub _pod2usage {
 
 sub execute {
     my $self = shift;
-    croak(
-        'The execute() method must be called from a subclass of ',
-        __PACKAGE__
+    hurl(
+        'The execute() method must be called from a subclass of '
+        . __PACKAGE__
     ) if ref $self eq __PACKAGE__;
 
-    croak( 'The execute() method has not been overridden in ', ref $self );
+    hurl 'The execute() method has not been overridden in ' . ref $self;
 }
 
 sub usage {
@@ -365,21 +369,6 @@ Send a warning messages to C<STDERR>. Warnings will have C<warning: > prefixed
 to every line. Use if something unexpected happened but you can recover from
 it.
 
-=head3 C<unfound>
-
-  $cmd->unfound;
-
-Exit the program with status code 1. Best for use for non-fatal errors,
-such as when something requested was not found.
-
-=head3 C<fail>
-
-  $cmd->fail('File or directory "foo" not found.');
-
-Send a failure message to C<STDERR> and exit with status code 2. Failures will
-have C<fatal: > prefixed to every line. Use if something unexpected happened
-and you cannot recover from it.
-
 =head3 C<usage>
 
   $cmd->usage('Missing "value" argument');
@@ -405,21 +394,6 @@ will be the first found of:
 
 For an ideal usage messages, C<sqitch-$command-usage.pod> should be created by
 all command subclasses.
-
-=head3 C<help>
-
-  $cmd->help('"foo" is not a valid command.');
-
-Sends messages to C<STDERR> and exists with an additional message to "See
-sqitch --help". Help messages will have C<sqitch: > prefixed to every line.
-Use if the user has misused the app.
-
-=head3 C<bail>
-
-  $cmd->bail(3, 'The config file is invalid');
-
-Exits with the specified error code, sending any specified messages to
-C<STDOUT> if the exit code is 0, and to C<STDERR> if it is not 0.
 
 =head1 See Also
 

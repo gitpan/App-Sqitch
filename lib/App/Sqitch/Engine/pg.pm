@@ -5,7 +5,6 @@ use Moose;
 use utf8;
 use Path::Class;
 use DBI;
-use Carp;
 use Try::Tiny;
 use App::Sqitch::X qw(hurl);
 use Locale::TextDomain qw(App-Sqitch);
@@ -14,7 +13,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Engine';
 
-our $VERSION = '0.50';
+our $VERSION = '0.51';
 
 has client => (
     is       => 'ro',

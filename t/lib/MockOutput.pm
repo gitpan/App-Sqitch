@@ -16,11 +16,6 @@ my @mocked = qw(
     emit
     vent
     warn
-    unfound
-    fail
-    help
-    usage
-    bail
 );
 
 my %CAPTURED;
@@ -28,18 +23,10 @@ my %CAPTURED;
 __PACKAGE__->clear;
 
 for my $meth (@mocked) {
-    if ($meth =~ /unfound|fail|help|usage|bail/) {
-        $MOCK->mock($meth => sub {
-            shift;
-            push @{ $CAPTURED{$meth} } => [@_];
-            die uc($meth) . ": " . join '', @_;
-        });
-    } else {
-        $MOCK->mock($meth => sub {
-            shift;
-            push @{ $CAPTURED{$meth} } => [@_];
-        });
-    }
+    $MOCK->mock($meth => sub {
+        shift;
+        push @{ $CAPTURED{$meth} } => [@_];
+    });
 
     my $get = sub {
         my $ret = $CAPTURED{$meth};

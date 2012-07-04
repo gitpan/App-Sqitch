@@ -47,6 +47,7 @@ lib/sqitch-tag.pod
 lib/sqitch.pod
 lib/sqitchtutorial.pod
 MANIFEST			This list of files
+META.json
 META.yml
 priv/Module/Build/Sqitch.pm
 README.md
@@ -108,4 +109,3 @@ t/tag.t
 t/tag_cmd.t
 t/user.conf
 t/x.t
-META.json

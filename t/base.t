@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 94;
+use Test::More tests => 77;
 #use Test::More 'no_plan';
 use Test::MockModule;
 use Path::Class;
@@ -11,12 +11,6 @@ use Test::NoWarnings;
 use Capture::Tiny ':all';
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X 'hurl';
-
-BEGIN {
-    # Stub out exit.
-    *CORE::GLOBAL::exit = sub { die 'EXITED: ' . (@_ ? shift : 0); };
-    $SIG{__DIE__} = \&Carp::confess;
-}
 
 my $CLASS;
 BEGIN {
@@ -41,7 +35,6 @@ can_ok $CLASS, qw(
     revert_dir
     test_dir
     extension
-    dry_run
     verbosity
 );
 
@@ -64,7 +57,6 @@ for my $attr (qw(
 is $sqitch->plan_file, $sqitch->top_dir->file('sqitch.plan')->cleanup,
     'Default plan file should be $top_dir/sqitch.plan';
 is $sqitch->verbosity, 1, 'verbosity should be 1';
-is $sqitch->dry_run, 0, 'dry_run should be 0';
 is $sqitch->extension, 'sql', 'Default extension should be sql';
 is $sqitch->top_dir, dir(), 'Default top_dir should be .';
 is $sqitch->deploy_dir, dir(qw(deploy)), 'Default deploy_dir should be ./sql/deploy';
@@ -216,59 +208,8 @@ is capture_stderr { $sqitch->vent('This ', "that\n", 'and the other') },
     "This that\nand the other\n",
     'vent should work';
 
-# Fail.
-is capture_stderr {
-    throws_ok { $sqitch->fail('This ', "that\n", "and the other") }
-        qr/EXITED: 2/
-}, "fatal: This that\nfatal: and the other\n",
-    'fail should work';
-
-# Unfound
-is capture_stderr {
-    throws_ok { $sqitch->unfound } qr/EXITED: 1/
-}, '', 'unfound print nothing';
-
-# Help.
-$0 = 'sqch';
-is capture_stderr {
-    throws_ok { $sqitch->help('This ', "that\n", "and the other.") }
-        qr/EXITED: 1/
-}, "sqch: This that\nsqch: and the other. See sqch --help\n",
-    'help should work';
-
-is capture_stderr {
-    throws_ok { $sqitch->help('This ', "that\n", "and the other.") }
-        qr/EXITED: 1/
-}, "sqch: This that\nsqch: and the other. See sqch --help\n",
-    'help should work';
-
-# Bail.
-is capture_stdout {
-    throws_ok { $sqitch->bail(0, 'This ', "that\n", "and the other") }
-        qr/EXITED: 0/
-}, "This that\nand the other\n",
-    'bail should work with exit code 0';
-
-is capture_stdout {
-    throws_ok { $sqitch->bail(0) } qr/EXITED: 0/
-}, '',  'bail 0 should emit nothing when no messages';
-
-is capture_stderr {
-    throws_ok { $sqitch->bail(1, 'This ', "that\n", "and the other") }
-        qr/EXITED: 1/
-}, "This that\nand the other\n",
-    'bail should work with exit code 1';
-
-is capture_stderr {
-    throws_ok { $sqitch->bail(2) } qr/EXITED: 2/
-}, '',  'bail 2 should emit nothing when no messages';
-
 ##############################################################################
 # Test run().
-my $mock = Test::MockModule->new($CLASS);
-my @bail;
-$mock->mock(bail => sub { shift; @bail = @_; die "BAILED: @_" });
-
 can_ok $CLASS, 'run';
 my ($stdout, $stderr) = capture {
     ok $sqitch->run(

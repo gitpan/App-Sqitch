@@ -21,7 +21,7 @@ use Moose::Util::TypeConstraints;
 use MooseX::Types::Path::Class;
 use namespace::autoclean;
 
-our $VERSION = '0.50';
+our $VERSION = '0.51';
 
 has plan_file => (
     is       => 'ro',
@@ -128,8 +128,6 @@ has extension => (
     }
 );
 
-has dry_run => ( is => 'ro', isa => 'Bool', required => 1, default => 0 );
-
 has verbosity => (
     is       => 'ro',
     required => 1,
@@ -235,7 +233,6 @@ sub _core_opts {
         revert-dir=s
         test-dir=s
         extension=s
-        dry-run
         etc-path
         quiet
         verbose+
@@ -345,12 +342,22 @@ sub capture {
 sub spool {
     my ($self, $fh) = (shift, shift);
     local $SIG{__WARN__} = sub { }; # Silence warning.
-    open my $pipe, '|-', @_ or die "Cannot exec $_[0]: $!\n";
+    open my $pipe, '|-', @_ or hurl io => __x(
+        'Cannot exec {command}: {error}',
+        command => $_[0],
+        error   => $!,
+    );
     local $SIG{PIPE} = sub { die 'spooler pipe broke' };
     print $pipe $_ while <$fh>;
-    close $pipe or die $!
-        ? "Error closing pipe to $_[0]: $!\n"
-        : "$_[0] unexpectedly returned exit value " . ($? >> 8) . "\n";
+    close $pipe or hurl io => $! ? __x(
+        'Error closing pipe to {command}: {error}',
+         command => $_[0],
+         errror  => $!,
+    ) : __x(
+        '{command} unexpectedly returned exit value {exitval}',
+        command => $_[0],
+        exitval => ($? >> 8),
+    );
     return $self;
 }
 
@@ -405,36 +412,6 @@ sub vent {
 sub warn {
     my $self = shift;
     say STDERR _prepend 'warning:', @_;
-}
-
-sub unfound {
-    exit 1;
-}
-
-sub fail {
-    my $self = shift;
-    say STDERR _prepend 'fatal:', @_;
-    exit 2;
-}
-
-sub help {
-    my $self = shift;
-    my $bn   = _bn;
-    say STDERR _prepend( "$bn:", @_ ), " See $bn --help";
-    exit 1;
-}
-
-sub bail {
-    my ( $self, $code ) = ( shift, shift );
-    if (@_) {
-        if ($code) {
-            say STDERR @_;
-        }
-        else {
-            say STDOUT @_;
-        }
-    }
-    exit $code;
 }
 
 __PACKAGE__->meta->make_immutable;
@@ -505,8 +482,6 @@ Constructs and returns a new Sqitch object. The supported parameters include:
 
 =item C<extension>
 
-=item C<dry_run>
-
 =item C<editor>
 
 =item C<verbosity>
@@ -538,8 +513,6 @@ Constructs and returns a new Sqitch object. The supported parameters include:
 =head3 C<test_dir>
 
 =head3 C<extension>
-
-=head3 C<dry_run>
 
 =head3 C<editor>
 
@@ -637,36 +610,6 @@ when reverting failed changes.
 Send a warning messages to C<STDERR>. Warnings will have C<warning: > prefixed
 to every line. Use if something unexpected happened but you can recover from
 it.
-
-=head3 C<unfound>
-
-  $sqitch->unfound;
-
-Exit the program with status code 1. Best for use for non-fatal errors,
-such as when something requested was not found.
-
-=head3 C<fail>
-
-  $sqitch->fail('File or directory "foo" not found.');
-
-Send a failure message to C<STDERR> and exit with status code 2. Failures will
-have C<fatal: > prefixed to every line. Use if something unexpected happened
-and you cannot recover from it.
-
-=head3 C<help>
-
-  $sqitch->help('"foo" is not a valid command.');
-
-Sends messages to C<STDERR> and exists with an additional message to "See
-sqitch --help". Help messages will have C<sqitch: > prefixed to every line.
-Use if the user has misused the app.
-
-=head3 C<bail>
-
-  $sqitch->bail(3, 'The config file is invalid');
-
-Exits with the specified error code, sending any specified messages to
-C<STDOUT> if the exit code is 0, and to C<STDERR> if it is not 0.
 
 =head1 To Do
 

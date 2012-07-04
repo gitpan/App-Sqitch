@@ -5,13 +5,14 @@ use strict;
 use warnings;
 use utf8;
 use Locale::TextDomain qw(App-Sqitch);
+use App::Sqitch::X qw(hurl);
 use File::Copy;
 use Moose;
 use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.50';
+our $VERSION = '0.51';
 
 has requires => (
     is       => 'ro',
@@ -110,8 +111,11 @@ sub _copy {
         return;
     }
 
-    File::Copy::syscopy $src, $dest or $self->fail(
-        "Cannot copy $src to $dest: $!"
+    File::Copy::syscopy $src, $dest or hurl rework => __x(
+        'Cannot copy {src} to {dest}: {error}',
+        src   => $src,
+        dest  => $dest,
+        error => $!,
     );
 
     $self->debug(__x(

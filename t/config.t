@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 313;
+use Test::More tests => 344;
 #use Test::More 'no_plan';
 use File::Spec;
 use Test::MockModule;
@@ -10,6 +10,7 @@ use Test::Exception;
 use Test::NoWarnings;
 use Path::Class;
 use File::Path qw(remove_tree);
+use Locale::TextDomain qw(App-Sqitch);
 
 my $CLASS;
 BEGIN {
@@ -178,8 +179,6 @@ is_deeply App::Sqitch::Command::config->configure( $sqitch->config, {
 # Test execute().
 my @fail;
 $mock->mock(fail => sub { shift; @fail = @_; die "FAIL @_" });
-my @unfound;
-$mock->mock(unfound => sub { shift; @unfound = @_; die "UNFOUND @_" });
 my @set;
 $mock->mock(set => sub { shift; @set = @_; return 1 });
 my @get;
@@ -255,8 +254,9 @@ is_deeply \@emit, [[1]],
     'Should have emitted the revert revision as an int';
 @emit = ();
 
-throws_ok { $cmd->execute('bundle.tags_only') } qr/FAIL/,
+throws_ok { $cmd->execute('bundle.tags_only') } 'App::Sqitch::X',
     'Get bundle.tags_only as an int should fail';
+is $@->ident, 'config', 'Int cast exception ident should be "config"';
 
 # Make sure num data type works.
 ok $cmd = App::Sqitch::Command::config->new({
@@ -275,8 +275,9 @@ is_deeply \@emit, [[1.1]],
     'Should have emitted the revert revision as an num';
 @emit = ();
 
-throws_ok { $cmd->execute('bundle.tags_only') } qr/FAIL/,
+throws_ok { $cmd->execute('bundle.tags_only') } 'App::Sqitch::X',
     'Get bundle.tags_only as an num should fail';
+is $@->ident, 'config', 'Num cast exception ident should be "config"';
 
 # Make sure bool data type works.
 ok $cmd = App::Sqitch::Command::config->new({
@@ -285,10 +286,12 @@ ok $cmd = App::Sqitch::Command::config->new({
     type    => 'bool',
 }), 'Create config get bool command';
 
-throws_ok { $cmd->execute('revert.count') } qr/FAIL/,
+throws_ok { $cmd->execute('revert.count') } 'App::Sqitch::X',
     'Should get failure for invalid bool int';
-throws_ok { $cmd->execute('revert.revision') } qr/FAIL/,
+is $@->ident, 'config', 'Bool int cast exception ident should be "config"';
+throws_ok { $cmd->execute('revert.revision') } 'App::Sqitch::X',
     'Should get failure for invalid bool num';
+is $@->ident, 'config', 'Bool num cast exception ident should be "config"';
 
 ok $cmd->execute('bundle.tags_only'), 'Get bundle.tags_only as bool';
 is_deeply \@emit, [['true']],
@@ -334,12 +337,14 @@ CONTEXT: {
     ok $cmd->execute('core.pg.client'), 'Get system core.pg.client';
     is_deeply \@emit, [['/usr/local/pgsql/bin/psql']],
         'Should have emitted the system core.pg.client';
-    @emit = @fail = @unfound = ();
+    @emit = @fail = ();
 
-    throws_ok { $cmd->execute('core.pg.host') } qr/UNFOUND/,
+    throws_ok { $cmd->execute('core.pg.host') } 'App::Sqitch::X',
         'Attempt to get core.pg.host should fail';
+    is $@->ident, 'config', 'Error ident should be "config"';
+    is $@->message, '', 'Error Message should be empty';
+    is $@->exitval, 1, 'Error exitval should be 1';
     is_deeply \@emit, [], 'Nothing should have been emitted';
-    is_deeply \@unfound, [], 'Nothing should have been output on failure';
 
     local $ENV{SQITCH_USER_CONFIG} = file qw(t user.conf);
     $sqitch->config->load;
@@ -387,9 +392,11 @@ CONTEXT: {
         action  => 'get',
     }), 'Create another system config get command';
     ok !-f $cmd->file, 'There should be no system config file';
-    throws_ok { $cmd->execute('core.engine') } qr/UNFOUND/,
+    throws_ok { $cmd->execute('core.engine') } 'App::Sqitch::X',
         'Should fail when no system config file';
-    is_deeply \@unfound, [], 'Nothing should have been emitted';
+    is $@->ident, 'config', 'Error ident should be "config"';
+    is $@->message, '', 'Error Message should be empty';
+    is $@->exitval, 1, 'Error exitval should be 1';
 
     local $ENV{SQITCH_USER_CONFIG} = 'NONEXISTENT';
     ok $cmd = App::Sqitch::Command::config->new({
@@ -398,9 +405,11 @@ CONTEXT: {
         action  => 'get',
     }), 'Create another user config get command';
     ok !-f $cmd->file, 'There should be no user config file';
-    throws_ok { $cmd->execute('core.engine') } qr/UNFOUND/,
+    throws_ok { $cmd->execute('core.engine') } 'App::Sqitch::X',
         'Should fail when no user config file';
-    is_deeply \@unfound, [], 'Nothing should have been emitted';
+    is $@->ident, 'config', 'Error ident should be "config"';
+    is $@->message, '', 'Error Message should be empty';
+    is $@->exitval, 1, 'Error exitval should be 1';
 
     local $ENV{SQITCH_CONFIG} = 'NONEXISTENT';
     ok $cmd = App::Sqitch::Command::config->new({
@@ -409,9 +418,11 @@ CONTEXT: {
         action  => 'get',
     }), 'Create another local config get command';
     ok !-f $cmd->file, 'There should be no local config file';
-    throws_ok { $cmd->execute('core.engine') } qr/UNFOUND/,
+    throws_ok { $cmd->execute('core.engine') } 'App::Sqitch::X',
         'Should fail when no local config file';
-    is_deeply \@unfound, [], 'Nothing should have been emitted';
+    is $@->ident, 'config', 'Error ident should be "config"';
+    is $@->message, '', 'Error Message should be empty';
+    is $@->exitval, 1, 'Error exitval should be 1';
 }
 
 ##############################################################################
@@ -620,10 +631,12 @@ ok $cmd->execute('core.foo', 'z$'), 'Get core.foo with regex';
 is_deeply \@emit, [['baz']], 'Should have emitted value';
 @emit = ();
 
-throws_ok { $cmd->execute('core.foo', 'x$') } qr/UNFOUND/,
+throws_ok { $cmd->execute('core.foo', 'x$') } 'App::Sqitch::X',
     'Attempt to get core.foo with non-matching regex should fail';
+is $@->ident, 'config', 'Error ident should be "config"';
+is $@->message, '', 'Error Message should be empty';
+is $@->exitval, 1, 'Error exitval should be 1';
 is_deeply \@emit, [], 'Nothing should have been emitted';
-is_deeply \@unfound, [], 'Nothing should have been output on failure';
 
 ##############################################################################
 # Test get_all().
@@ -652,10 +665,12 @@ ok $cmd->execute('core.foo', 'z$'), 'Call get_all on core.foo with limiting rege
 is_deeply \@emit, [["baz"]], 'Only the one foo should have been emitted';
 @emit = ();
 
-throws_ok { $cmd->execute('core.foo', 'x$') } qr/UNFOUND/,
+throws_ok { $cmd->execute('core.foo', 'x$') } 'App::Sqitch::X',
     'Attempt to get_all core.foo with non-matching regex should fail';
+is $@->ident, 'config', 'Error ident should be "config"';
+is $@->message, '', 'Error Message should be empty';
+is $@->exitval, 1, 'Error exitval should be 1';
 is_deeply \@emit, [], 'Nothing should have been emitted';
-is_deeply \@unfound, [], 'Nothing should have been output on failure';
 
 # Make sure the key is required.
 throws_ok { $cmd->get_all } qr/USAGE/, 'Should get_all usage for missing get_all key';
@@ -682,8 +697,9 @@ is_deeply \@emit, [[1]],
     'Should have emitted the revert revision as an int';
 @emit = ();
 
-throws_ok { $cmd->execute('bundle.tags_only') } qr/FAIL/,
+throws_ok { $cmd->execute('bundle.tags_only') } 'App::Sqitch::X',
     'Get bundle.tags_only as an int should fail';
+is $@->ident, 'config', 'Int cast exception ident should be "config"';
 
 # Make sure num data type works.
 ok $cmd = App::Sqitch::Command::config->new({
@@ -702,8 +718,9 @@ is_deeply \@emit, [[1.1]],
     'Should have emitted the revert revision as an num';
 @emit = ();
 
-throws_ok { $cmd->execute('bundle.tags_only') } qr/FAIL/,
+throws_ok { $cmd->execute('bundle.tags_only') } 'App::Sqitch::X',
     'Get bundle.tags_only as an num should fail';
+is $@->ident, 'config', 'Num cast exception ident should be "config"';
 
 # Make sure bool data type works.
 ok $cmd = App::Sqitch::Command::config->new({
@@ -712,10 +729,12 @@ ok $cmd = App::Sqitch::Command::config->new({
     type    => 'bool',
 }), 'Create config get_all bool command';
 
-throws_ok { $cmd->execute('revert.count') } qr/FAIL/,
+throws_ok { $cmd->execute('revert.count') } 'App::Sqitch::X',
     'Should get failure for invalid bool int';
-throws_ok { $cmd->execute('revert.revision') } qr/FAIL/,
+is $@->ident, 'config', 'Bool int cast exception ident should be "config"';
+throws_ok { $cmd->execute('revert.revision') } 'App::Sqitch::X',
     'Should get failure for invalid bool num';
+is $@->ident, 'config', 'Num int cast exception ident should be "config"';
 
 ok $cmd->execute('bundle.tags_only'), 'Get bundle.tags_only as bool';
 is_deeply \@emit, [[$Config::GitLike::VERSION > 1.08 ? 'true' : 1]],
@@ -776,10 +795,12 @@ core.pg.username=theory}
 ]], 'Should match all core.pg options that match';
 @emit = ();
 
-throws_ok { $cmd->execute('core\\.pg\\..+', 'x$') } qr/UNFOUND/,
+throws_ok { $cmd->execute('core\\.pg\\..+', 'x$') } 'App::Sqitch::X',
     'Attempt to get_regex core.foo with non-matching regex should fail';
+is $@->ident, 'config', 'Error ident should be "config"';
+is $@->message, '', 'Error Message should be empty';
+is $@->exitval, 1, 'Error exitval should be 1';
 is_deeply \@emit, [], 'Nothing should have been emitted';
-is_deeply \@unfound, [], 'Nothing should have been output on failure';
 
 # Make sure the key is required.
 throws_ok { $cmd->get_regex } qr/USAGE/, 'Should get_regex usage for missing get_regex key';
@@ -806,8 +827,9 @@ is_deeply \@emit, [['revert.revision=1']],
     'Should have emitted the revert revision as an int';
 @emit = ();
 
-throws_ok { $cmd->execute('bundle.tags_only') } qr/FAIL/,
+throws_ok { $cmd->execute('bundle.tags_only') } 'App::Sqitch::X',
     'Get bundle.tags_only as an int should fail';
+is $@->ident, 'config', 'Int cast exception ident should be "config"';
 
 # Make sure num data type works.
 ok $cmd = App::Sqitch::Command::config->new({
@@ -826,8 +848,9 @@ is_deeply \@emit, [['revert.revision=1.1']],
     'Should have emitted the revert revision as an num';
 @emit = ();
 
-throws_ok { $cmd->execute('bundle.tags_only') } qr/FAIL/,
+throws_ok { $cmd->execute('bundle.tags_only') } 'App::Sqitch::X',
     'Get bundle.tags_only as an num should fail';
+is $@->ident, 'config', 'Num cast exception ident should be "config"';
 
 # Make sure bool data type works.
 ok $cmd = App::Sqitch::Command::config->new({
@@ -836,10 +859,12 @@ ok $cmd = App::Sqitch::Command::config->new({
     type    => 'bool',
 }), 'Create config get_regex bool command';
 
-throws_ok { $cmd->execute('revert.count') } qr/FAIL/,
+throws_ok { $cmd->execute('revert.count') } 'App::Sqitch::X',
     'Should get failure for invalid bool int';
-throws_ok { $cmd->execute('revert.revision') } qr/FAIL/,
+is $@->ident, 'config', 'Bool int cast exception ident should be "config"';
+throws_ok { $cmd->execute('revert.revision') } 'App::Sqitch::X',
     'Should get failure for invalid bool num';
+is $@->ident, 'config', 'Num int cast exception ident should be "config"';
 
 ok $cmd->execute('bundle.tags_only'), 'Get bundle.tags_only as bool';
 is_deeply \@emit, [['bundle.tags_only=' . ($Config::GitLike::VERSION > 1.08 ? 'true' : 1)]],
@@ -885,10 +910,11 @@ is_deeply read_config($cmd->file), {
     'core.foo'  => ['bar', 'baz'],
 }, 'core.engine should have been removed';
 
-throws_ok { $cmd->execute('core.foo') } qr/FAIL/,
+throws_ok { $cmd->execute('core.foo') } 'App::Sqitch::X',
     'Should get failure trying to delete multivalue key';
-is_deeply \@fail, ['Cannot unset key with multiple values'],
-    'And it should have show the proper error message';
+is $@->ident, 'config', 'Multiple value exception ident should be "config"';
+is $@->message, __ 'Cannot unset key with multiple values',
+    'And it should have the proper error message';
 
 ok $cmd->execute('core.foo', 'z$'), 'Unset core.foo with a regex';
 is_deeply read_config($cmd->file), {
@@ -985,10 +1011,11 @@ throws_ok { $cmd->execute('baz', '') } qr/USAGE/, 'Should fail with bad new name
 is_deeply \@usage, ['Wrong number of arguments.'],
     'Message should be in the usage call';
 
-throws_ok { $cmd->execute('foo', 'bar') } qr/FAIL/, 'Should fail with invalid section';
-is_deeply \@fail, ['No such section!'],
-    'Message should be in the fail call';
-
+throws_ok { $cmd->execute('foo', 'bar') } 'App::Sqitch::X',
+    'Should fail with invalid section';
+is $@->ident, 'config', 'Invalid section exception ident should be "config"';
+is $@->message, __ 'No such section!',
+    'Invalid section exception message should be set';
 
 ##############################################################################
 # Test remove_section().
@@ -1004,24 +1031,29 @@ throws_ok { $cmd->execute() } qr/USAGE/, 'Should fail with no name';
 is_deeply \@usage, ['Wrong number of arguments.'],
     'Message should be in the usage call';
 
-throws_ok { $cmd->execute('bar') } qr/FAIL/, 'Should fail with invalid name';
-is_deeply \@fail, ['No such section!'],
-    'Message should be in the fail call';
+throws_ok { $cmd->execute('bar') } 'App::Sqitch::X',
+    'Should fail with invalid name';
+is $@->ident, 'config', 'Invalid key name exception ident should be "config"';
+is $@->message, __ 'No such section!', 'And the invalid key message should be set';
 
 ##############################################################################
 # Test errors with multiple values.
 
-throws_ok { $cmd->get('core.foo', '.') } qr/FAIL/,
+throws_ok { $cmd->get('core.foo', '.') } 'App::Sqitch::X',
     'Should fail fetching multi-value key';
-is_deeply \@fail, [qq{More then one value for the key "core.foo"}],
-    'The error should be sent to fail()';
+is $@->ident, 'config', 'Multi-value key exception ident should be "config"';
+is $@->message, __x(
+    'More then one value for the key "{key}"',
+    key => 'core.foo',
+), 'The multiple value error should be thrown';
 
 $cmd->add('core.foo', 'hi');
 $cmd->add('core.foo', 'bye');
-throws_ok { $cmd->set('core.foo', 'hi') } qr/FAIL/,
+throws_ok { $cmd->set('core.foo', 'hi') } 'App::Sqitch::X',
     'Should fail setting multi-value key';
-is_deeply \@fail, ['Cannot overwrite multiple values with a single value'],
-    'The error should be sent to fail()';
+is $@->ident, 'config', 'Mult-valkue key exception ident should be "config"';
+is $@->message, __('Cannot overwrite multiple values with a single value'),
+    'The multi-value key error should be thrown';
 
 ##############################################################################
 # Test edit().

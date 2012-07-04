@@ -4,21 +4,27 @@ use strict;
 use warnings;
 use v5.10.1;
 use utf8;
-use lib 't/lib';
+use Test::More tests => 85;
+#use Test::More 'no_plan';
 
+my $catch_exit;
 BEGIN {
+    $catch_exit = 0;
     # Stub out exit.
-    *CORE::GLOBAL::exit = sub { die 'EXITED: ' . (@_ ? shift : 0); };
-    $SIG{__DIE__} = \&Carp::confess;
+    *CORE::GLOBAL::exit = sub {
+        die 'EXITED: ' . (@_ ? shift : 0) if $catch_exit;
+        CORE::exit(@_);
+    };
 }
 
-use Test::More tests => 95;
-#use Test::More 'no_plan';
+
 use App::Sqitch;
 use Test::Exception;
 use Test::NoWarnings;
 use Test::MockModule;
+use Locale::TextDomain qw(App-Sqitch);
 use Capture::Tiny ':all';
+use lib 't/lib';
 
 my $CLASS;
 
@@ -102,12 +108,14 @@ ok $cmd = $CLASS->load({
 is $cmd->foo, 'hi', 'The "foo" attribute should be set';
 
 # Test handling of an invalid command.
-$0 = 'sqch';
-is capture_stderr {
-    throws_ok { $CLASS->load({ command => 'nonexistent', sqitch => $sqitch }) }
-        qr/EXITED: 1/, 'Should exit';
- }, qq{sqch: "nonexistent" is not a valid command. See sqch --help\n},
-    'Should get an exception for an invalid command';
+throws_ok { $CLASS->load({ command => 'nonexistent', sqitch => $sqitch }) }
+    'App::Sqitch::X', 'Should exit';
+is $@->ident, 'command', 'Invalid command error ident should be "config"';
+is $@->message, __x(
+    '"{command}" is not a valid command',
+    command => 'nonexistent',
+), 'Should get proper mesage for invalid command';
+is $@->exitval, 1, 'Should have exitval of 1';
 
 NOCOMMAND: {
     # Test handling of no command.
@@ -148,17 +156,21 @@ can_ok $CLASS, 'execute';
 ok $cmd = $CLASS->new({ sqitch => $sqitch }), "Create a $CLASS object";
 is $CLASS->command, '', 'Base class command should be ""';
 is $cmd->command, '', 'Base object command should be ""';
-throws_ok { $cmd->execute }
-    qr/\QThe execute() method must be called from a subclass of $CLASS/,
+throws_ok { $cmd->execute } 'App::Sqitch::X',
     'Should get an error calling execute on command base class';
+is $@->ident, 'DEV', 'Execute exception ident should be "DEV"';
+is $@->message, "The execute() method must be called from a subclass of $CLASS",
+    'The execute() error message should be correct';
 
 ok $cmd = App::Sqitch::Command::whu->new({sqitch => $sqitch}),
     'Create a subclass command object';
 is $cmd->command, 'whu', 'Subclass oject command should be "whu"';
 is +App::Sqitch::Command::whu->command, 'whu', 'Subclass class command should be "whu"';
-throws_ok { $cmd->execute }
-    qr/\QThe execute() method has not been overridden in App::Sqitch::Command::whu/,
+throws_ok { $cmd->execute } 'App::Sqitch::X',
     'Should get an error for un-overridden execute() method';
+is $@->ident, 'DEV', 'Un-overidden execute() exception ident should be "DEV"';
+is $@->message, "The execute() method has not been overridden in $CLASS\::whu",
+    'The unoverridden execute() error message should be correct';
 
 ##############################################################################
 # Test options parsing.
@@ -327,32 +339,8 @@ is capture_stderr { $cmd->warn('This ', "that\n", 'and the other') },
     "warning: This that\nwarning: and the other\n",
     'warn should work';
 
-# Fail.
-is capture_stderr {
-    throws_ok { $cmd->fail('This ', "that\n", "and the other") }
-        qr/EXITED: 2/
-}, "fatal: This that\nfatal: and the other\n",
-    'fail should work';
-
-# Unfound
-is capture_stderr {
-    throws_ok { $cmd->unfound } qr/EXITED: 1/
-}, '', 'unfound print nothing';
-
-# Help.
-is capture_stderr {
-    throws_ok { $cmd->help('This ', "that\n", "and the other.") }
-        qr/EXITED: 1/
-}, "sqch: This that\nsqch: and the other. See sqch --help\n",
-    'help should work';
-
-is capture_stderr {
-    throws_ok { $cmd->help('This ', "that\n", "and the other.") }
-        qr/EXITED: 1/
-}, "sqch: This that\nsqch: and the other. See sqch --help\n",
-    'help should work';
-
 # Usage.
+$catch_exit = 1;
 like capture_stderr {
     throws_ok { $cmd->usage('Invalid whozit') } qr/EXITED: 2/
 }, qr/Invalid whozit/, 'usage should work';
@@ -361,24 +349,3 @@ like capture_stderr {
     throws_ok { $cmd->usage('Invalid whozit') } qr/EXITED: 2/
 }, qr/\Qsqitch [<options>] <command> [<command-options>] [<args>]/,
     'usage should prefer sqitch-$command-usage';
-
-# Bail.
-is capture_stdout {
-    throws_ok { $cmd->bail(0, 'This ', "that\n", "and the other") }
-        qr/EXITED: 0/
-}, "This that\nand the other\n",
-    'bail should work with exit code 0';
-
-is capture_stdout {
-    throws_ok { $cmd->bail(0) } qr/EXITED: 0/
-}, '',  'bail 0 should emit nothing when no messages';
-
-is capture_stderr {
-    throws_ok { $cmd->bail(1, 'This ', "that\n", "and the other") }
-        qr/EXITED: 1/
-}, "This that\nand the other\n",
-    'bail should work with exit code 1';
-
-is capture_stderr {
-    throws_ok { $cmd->bail(2) } qr/EXITED: 2/
-}, '',  'bail 2 should emit nothing when no messages';
