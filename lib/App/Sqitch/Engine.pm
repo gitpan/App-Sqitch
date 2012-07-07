@@ -9,7 +9,7 @@ use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use namespace::autoclean;
 
-our $VERSION = '0.51';
+our $VERSION = '0.60';
 
 has sqitch => (
     is       => 'ro',
@@ -409,6 +409,21 @@ sub name_for_change_id {
     hurl "$class has not implemented name_for_change_id()";
 }
 
+sub current_state {
+    my $class = ref $_[0] || $_[0];
+    hurl "$class has not implemented current_state()";
+}
+
+sub current_changes {
+    my $class = ref $_[0] || $_[0];
+    hurl "$class has not implemented current_changes()";
+}
+
+sub current_tags {
+    my $class = ref $_[0] || $_[0];
+    hurl "$class has not implemented current_tags()";
+}
+
 __PACKAGE__->meta->make_immutable;
 no Moose;
 
@@ -712,6 +727,96 @@ applied to a change after that change, the name will be returned with the tag
 qualification, e.g., C<app_user@beta>. This value should be suitable for
 uniquely identifying the change, and passing to the C<get> or C<index_of>
 methods of L<App::Sqitch::Plan>.
+
+=head3 C<current_state>
+
+  my $state = $engine->current_state;
+
+Returns a hash reference representing the current state of the database, or
+C<undef> if the database has no changes deployed. The hash contains
+information about the last successfully deployed change, as well as any
+associated tags. The keys to the hash should include:
+
+=over
+
+=item C<change_id>
+
+The current change ID.
+
+=item C<change>
+
+The current change name.
+
+=item C<deployed_at>
+
+An L<App::Sqitch::DateTime> object representing the date and time at which the
+change was deployed.
+
+=item C<deployed_by>
+
+Name of the user who deployed the change.
+
+=item C<tags>
+
+An array reference of the names of associated tags.
+
+=back
+
+=head3 C<current_changes>
+
+  my @changes = $engine->current_changes;
+
+Returns a list of hash references representing the currently deployed changes
+in reverse chronological order. The keys to each hash should include:
+
+=over
+
+=item C<change_id>
+
+The change ID.
+
+=item C<change>
+
+The name of the change.
+
+=item C<deployed_at>
+
+An L<App::Sqitch::DateTime> object representing the date and time at which the
+change was deployed.
+
+=item C<deployed_by>
+
+Name of the user who deployed the change.
+
+=back
+
+=head3 C<current_tags>
+
+  my @tags = $engine->current_tags;
+
+Returns a list of hash references representing the currently applied tags, in
+reverse chronological order. The keys to each hash should include:
+
+=over
+
+=item C<tag_id>
+
+The tag ID.
+
+=item C<tag>
+
+The name of the tag.
+
+=item C<applied_at>
+
+An L<App::Sqitch::DateTime> object representing the date and time at which the
+tag was applied.
+
+=item C<applied_by>
+
+Name of the user who) or applied the tag.
+
+=back
 
 =head3 C<run_file>
 

@@ -10,13 +10,15 @@ use App::Sqitch::X qw(hurl);
 use Hash::Merge 'merge';
 use Moose;
 
-our $VERSION = '0.51';
+our $VERSION = '0.60';
 
 has sqitch => (
     is       => 'ro',
     isa      => 'App::Sqitch',
     required => 1,
     handles  => [qw(
+        plan
+        engine
         run
         capture
         probe
@@ -26,6 +28,7 @@ has sqitch => (
         info
         comment
         emit
+        vent
         warn
     )],
 );

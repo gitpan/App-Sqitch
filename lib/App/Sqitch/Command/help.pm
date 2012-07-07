@@ -10,13 +10,18 @@ use Pod::Find;
 use Moose;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.51';
+our $VERSION = '0.60';
 
 # XXX Add --all at some point, to output a list of all possible commands.
 
 sub execute {
     my ( $self, $command ) = @_;
-    my $look_for = 'sqitch' . ( $command ? "-$command" : '' );
+    $self->find_and_show('sqitch' . ( $command ? "-$command" : 'commands' ));
+}
+
+sub find_and_show {
+    my ( $self, $look_for ) = (shift, shift);
+
     my $pod = Pod::Find::pod_where({
         '-inc' => 1,
         '-script' => 1
@@ -30,6 +35,7 @@ sub execute {
         '-input'   => $pod,
         '-verbose' => 2,
         '-exitval' => 0,
+        @_,
     );
 }
 
@@ -63,6 +69,13 @@ works, read on.
 Executes the help command. If a command is passed, the help for that command will
 be shown. If it cannot be found, Sqitch will throw an error and exit. If no
 command is specified, the the L<Sqitch core documentation|sqitch> will be shown.
+
+=head3 C<find_and_show>
+
+  $help->find_and_show($file, %options);
+
+Does the work of finding the pod file C<$file> and passing it on to
+L<Pod::Usage>, along with any additional options for Pod::Usage's constructor.
 
 =head1 See Also
 

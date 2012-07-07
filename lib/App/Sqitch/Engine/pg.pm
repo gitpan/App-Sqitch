@@ -13,7 +13,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Engine';
 
-our $VERSION = '0.51';
+our $VERSION = '0.60';
 
 has client => (
     is       => 'ro',
@@ -434,6 +434,68 @@ sub name_for_change_id {
           FROM changes c
          WHERE change_id = ?
     }, undef, $change_id)->[0];
+}
+
+sub _ts2char($) {
+    my $col = shift;
+    return qq{to_char($col AT TIME ZONE 'UTC', '"year":YYYY:"month":MM:"day":DD:"hour":HH24:"minute":MI:"second":SS:"time_zone":"UTC"')};
+}
+
+sub _dt($) {
+    require App::Sqitch::DateTime;
+    return App::Sqitch::DateTime->new(split /:/ => shift);
+}
+
+sub current_state {
+    my $self  = shift;
+    my $dtcol = _ts2char 'deployed_at';
+    my $state = $self->_dbh->selectrow_hashref(qq{
+        SELECT change_id
+             , change
+             , deployed_by
+             , $dtcol AS deployed_at
+             , ARRAY(
+                 SELECT tag
+                   FROM tags
+                  WHERE change_id = changes.change_id
+                  ORDER BY applied_at
+             ) AS tags
+          FROM changes
+         ORDER BY changes.deployed_at DESC
+         LIMIT 1
+    }) or return undef;
+    $state->{deployed_at} = _dt $state->{deployed_at};
+    return $state;
+}
+
+sub current_changes {
+    my $self  = shift;
+    my $dtcol = _ts2char 'deployed_at';
+    return grep { $_->{deployed_at} = _dt $_->{deployed_at} } @{
+        $self->_dbh->selectall_arrayref(qq{
+            SELECT change_id
+                 , change
+                 , deployed_by
+                 , $dtcol AS deployed_at
+              FROM changes
+             ORDER BY changes.deployed_at DESC
+        }, { Slice => {} }) || []
+    };
+}
+
+sub current_tags {
+    my $self  = shift;
+    my $dtcol = _ts2char 'applied_at';
+    return grep { $_->{applied_at} = _dt $_->{applied_at} } @{
+        $self->_dbh->selectall_arrayref(qq{
+            SELECT tag_id
+                 , tag
+                 , applied_by
+                 , $dtcol AS applied_at
+              FROM tags
+             ORDER BY tags.applied_at DESC
+        }, { Slice => {} }) || []
+    };
 }
 
 sub _run {

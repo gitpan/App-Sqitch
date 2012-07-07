@@ -21,7 +21,7 @@ use Moose::Util::TypeConstraints;
 use MooseX::Types::Path::Class;
 use namespace::autoclean;
 
-our $VERSION = '0.51';
+our $VERSION = '0.60';
 
 has plan_file => (
     is       => 'ro',
@@ -191,16 +191,16 @@ sub go {
     $opts->{config} = $config;
     my $sqitch = $class->new($opts);
 
-    # 5. Instantiate the command object.
-    my $command = App::Sqitch::Command->load({
-        sqitch  => $sqitch,
-        command => $cmd,
-        config  => $config,
-        args    => $cmd_args,
-    });
-
-    # 6. Execute command.
     return try {
+        # 5. Instantiate the command object.
+        my $command = App::Sqitch::Command->load({
+            sqitch  => $sqitch,
+            command => $cmd,
+            config  => $config,
+            args    => $cmd_args,
+        });
+
+        # 6. Execute command.
         $command->execute( @{$cmd_args} ) ? 0 : 2;
     } catch {
         # Just bail for unknown exceptions.
@@ -277,8 +277,13 @@ sub _parse_core_opts {
     ) or $self->_pod2usage;
 
     # Handle documentation requests.
-    $self->_pod2usage( '-exitval' => 0, '-verbose' => 2 ) if delete $opts{man};
-    $self->_pod2usage( '-exitval' => 0                  ) if delete $opts{help};
+    if ($opts{help} || $opts{man}) {
+        $self->_pod2usage(
+            $opts{help} ? 'sqitchcommands' : 'sqitch',
+            '-exitval' => 0,
+            '-verbose' => 2,
+        );
+    }
 
     # Handle version request.
     if ( delete $opts{version} ) {
@@ -310,14 +315,11 @@ sub _parse_core_opts {
 }
 
 sub _pod2usage {
-    shift;
-    require Pod::Usage;
-    Pod::Usage::pod2usage(
-        '-verbose'  => 99,
-        '-sections' => '(?i:(Synopsis|Usage|Options))',
-        '-exitval'  => 2,
-        @_
-    );
+    my ( $self, $doc ) = ( shift, shift );
+    require App::Sqitch::Command::help;
+    # Help does not need the Sqitch command; since it's required, fake it.
+    my $help = App::Sqitch::Command::help->new( sqitch => bless {}, $self );
+    $help->find_and_show( $doc || 'sqitch', '-exitval' => 2, @_ );
 }
 
 sub run {
@@ -396,7 +398,7 @@ sub info {
 
 sub comment {
     my $self = shift;
-    say _prepend '#', @_ if $self->verbosity;
+    say _prepend '#', @_;
 }
 
 sub emit {
@@ -421,7 +423,7 @@ __END__
 
 =head1 Name
 
-App::Sqitch - VCS-powered SQL change management
+App::Sqitch - Sane database change management
 
 =head1 Synopsis
 

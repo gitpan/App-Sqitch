@@ -10,7 +10,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.51';
+our $VERSION = '0.60';
 
 sub execute {
     my ( $self, $name ) = @_;
@@ -41,7 +41,7 @@ __END__
 
 =head1 Name
 
-App::Sqitch::Command::tag - Tag a Sqitch change
+App::Sqitch::Command::tag - Add or list tags in a Sqitch plan
 
 =head1 Synopsis
 

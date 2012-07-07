@@ -1,6 +1,6 @@
 =head1 Name
 
-sqitch - Simple database change management
+sqitch - Sane database change management
 
 =head1 Synopsis
 
@@ -8,10 +8,9 @@ sqitch - Simple database change management
 
 =head1 Description
 
-Sqitch is a VCS-aware database change management application. What makes it
-different from your typical
-L<migration|Module::Build::DB>-L<style|DBIx::Migration> approaches? A few
-things:
+Sqitch is a database change management application. What makes it different
+from your typical L<migration|Module::Build::DB>-L<style|DBIx::Migration>
+approaches? A few things:
 
 =over
 
@@ -159,10 +158,8 @@ name or tag).
 
   sqitch --plan-file plan.txt
 
-Path to the deployment plan file. Defaults to F<./sqitch.plan>. If this file
-is not present, Sqitch will attempt to read from VCS files. If no supported
-VCS system is in place, an exception will be thrown. See L</Plan File> for a
-description of its structure.
+Path to the deployment plan file. Defaults to F<$top_dir/sqitch.plan>. See
+L</Plan File> for a description of its structure.
 
 =item C<--engine>
 
@@ -324,54 +321,12 @@ Create the plan file and directories for deploy, revert, and test scripts if
 they do not already exist. This command is useful for starting a new Sqitch
 project.
 
-=item C<status>
-
-*Not yet implemented.
+=item L<C<status>|sqitch-status>
 
 Output information about the current deployment state of a database, including
 the name of the last deployed change, as well as any tags applied to it. If
 any changes in the plan have not been deployed, they will be listed
-separately. Options:
-
-=over
-
-=item C<-s>
-
-=item C<--show>
-
-How much information to show. This option may be passed without a C<-s> or
-C<--show>. Possible values include:
-
-=over
-
-=item C<latest>
-
-Show only the latest change. This is the default.
-
-=item C<tags>
-
-Show a list of all deployed tags.
-
-=item C<changes>
-
-Show a list of all deployed changes.
-
-=back
-
-=item C<format>
-
-The format to use to display tags or changes, if either are specified via the
-C<--show> option. The value may be any one of:
-
-=over
-
-=item C<oneline>
-
-=item C<table>
-
-=back
-
-=back
+separately.
 
 =item C<log>
 
@@ -496,9 +451,7 @@ bundle.$property $value> command. Options and configuration properties:
 
 Tag to start the plan from. All tags and changes prior to that tag will not be
 included in the plan, and their change scripts Will be omitted from the bundle
-directory. Useful if you've rejiggered your deployment changes to start from a
-point later in your VCS history than the beginning of time. Property name:
-C<bundle.from>.
+directory. Property name: C<bundle.from>.
 
 =item C<--to>
 

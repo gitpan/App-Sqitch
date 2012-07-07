@@ -15,7 +15,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.51';
+our $VERSION = '0.60';
 
 sub execute {
     my $self = shift;
@@ -234,7 +234,7 @@ __END__
 
 =head1 Name
 
-App::Sqitch::Command::init - Create a new Sqitch project
+App::Sqitch::Command::init - Initialize a Sqitch project
 
 =head1 Synopsis
 

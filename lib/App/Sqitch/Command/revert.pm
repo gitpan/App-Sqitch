@@ -10,7 +10,7 @@ use List::Util qw(first);
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.51';
+our $VERSION = '0.60';
 
 has to_target => (
     is  => 'ro',
@@ -36,7 +36,7 @@ __END__
 
 =head1 Name
 
-App::Sqitch::Command::revert - Revert Sqitch changes
+App::Sqitch::Command::revert - Revert Sqitch changes from a database
 
 =head1 Synopsis
 

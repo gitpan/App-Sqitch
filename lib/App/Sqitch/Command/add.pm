@@ -15,7 +15,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.51';
+our $VERSION = '0.60';
 
 has requires => (
     is       => 'ro',
@@ -237,7 +237,7 @@ __END__
 
 =head1 Name
 
-App::Sqitch::Command::add - Add a new deployment change
+App::Sqitch::Command::add - Add a new change to a Sqitch plan
 
 =head1 Synopsis
 
