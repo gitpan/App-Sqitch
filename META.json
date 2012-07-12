@@ -58,6 +58,7 @@
             "Getopt::Long" : "0",
             "Hash::Merge" : "0",
             "IO::File" : "0",
+            "IO::Pager" : "0",
             "IPC::System::Simple" : "1.17",
             "List::Util" : "0",
             "Locale::TextDomain" : "1.20",
@@ -72,8 +73,10 @@
             "Role::Identifiable::HasIdent" : "0.005",
             "Role::Identifiable::HasTags" : "0.005",
             "StackTrace::Auto" : "0",
+            "String::Formatter" : "0",
             "Sub::Exporter" : "0",
             "Template::Tiny" : "0.11",
+            "Term::ANSIColor" : "2.02",
             "Throwable" : "0",
             "Try::Tiny" : "0",
             "URI" : "0",
@@ -86,71 +89,75 @@
    "provides" : {
       "App::Sqitch" : {
          "file" : "lib/App/Sqitch.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Command" : {
          "file" : "lib/App/Sqitch/Command.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Command::add" : {
          "file" : "lib/App/Sqitch/Command/add.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Command::config" : {
          "file" : "lib/App/Sqitch/Command/config.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Command::deploy" : {
          "file" : "lib/App/Sqitch/Command/deploy.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Command::help" : {
          "file" : "lib/App/Sqitch/Command/help.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Command::init" : {
          "file" : "lib/App/Sqitch/Command/init.pm",
-         "version" : "0.60"
+         "version" : "0.70"
+      },
+      "App::Sqitch::Command::log" : {
+         "file" : "lib/App/Sqitch/Command/log.pm",
+         "version" : "0.70"
       },
       "App::Sqitch::Command::revert" : {
          "file" : "lib/App/Sqitch/Command/revert.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Command::rework" : {
          "file" : "lib/App/Sqitch/Command/rework.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Command::status" : {
          "file" : "lib/App/Sqitch/Command/status.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Command::tag" : {
          "file" : "lib/App/Sqitch/Command/tag.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Config" : {
          "file" : "lib/App/Sqitch/Config.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::DateTime" : {
          "file" : "lib/App/Sqitch/DateTime.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Engine" : {
          "file" : "lib/App/Sqitch/Engine.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Engine::pg" : {
          "file" : "lib/App/Sqitch/Engine/pg.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Engine::sqlite" : {
          "file" : "lib/App/Sqitch/Engine/sqlite.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Plan" : {
          "file" : "lib/App/Sqitch/Plan.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       },
       "App::Sqitch::Plan::Blank" : {
          "file" : "lib/App/Sqitch/Plan/Blank.pm",
@@ -182,7 +189,7 @@
       },
       "App::Sqitch::X" : {
          "file" : "lib/App/Sqitch/X.pm",
-         "version" : "0.60"
+         "version" : "0.70"
       }
    },
    "release_status" : "stable",
@@ -198,5 +205,5 @@
          "url" : "http://github.com/theory/sqitch/"
       }
    },
-   "version" : "0.60"
+   "version" : "0.70"
 }

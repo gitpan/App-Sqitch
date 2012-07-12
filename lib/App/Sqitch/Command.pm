@@ -10,7 +10,7 @@ use App::Sqitch::X qw(hurl);
 use Hash::Merge 'merge';
 use Moose;
 
-our $VERSION = '0.60';
+our $VERSION = '0.70';
 
 has sqitch => (
     is       => 'ro',
@@ -30,6 +30,7 @@ has sqitch => (
         emit
         vent
         warn
+        page
     )],
 );
 
@@ -363,6 +364,29 @@ lower than 1, nothing will be output.
 Send a message to C<STDOUT>, without regard to the verbosity. Should be used
 only if the user explicitly asks for output, such as for
 C<sqitch config --get core.editor>.
+
+=head3 C<vent>
+
+  $cmd->vent('That was a misage.');
+
+Send a message to C<STDERR>, without regard to the verbosity. Should be used
+only for error messages to be printed before exiting with an error, such as
+when reverting failed changes.
+
+=head3 C<page>
+
+  $sqitch->page('Search results:');
+
+Like C<emit()>, but sends the output to a pager handle rather than C<STDOUT>.
+Unless there is no TTY (such as when output is being piped elsewhere), in
+which case it I<is> sent to C<STDOUT>. Meant to be used to send a lot of data
+to the user at once, such as when display the results of searching the event
+log:
+
+  $iter = $sqitch->engine->search_events;
+  while ( my $change = $iter->() ) {
+      $cmd->page(join ' - ', @{ $change }{ qw(change_id event change) });
+  }
 
 =head3 C<warn>
 

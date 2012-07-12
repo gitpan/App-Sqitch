@@ -13,7 +13,7 @@ use List::Util qw(max);
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.60';
+our $VERSION = '0.70';
 
 has show_changes => (
     is      => 'ro',
@@ -42,7 +42,7 @@ has show_tags => (
 has date_format => (
     is      => 'ro',
     lazy    => 1,
-    isa     => enum([ App::Sqitch::DateTime->as_string_formats ]),
+    isa     => 'Str',
     default => sub {
         shift->sqitch->config->get( key => 'status.date_format' ) || 'iso'
     }
@@ -126,17 +126,26 @@ sub emit_state {
     return $self;
 }
 
+sub _all {
+    my $iter = shift;
+    my @res;
+    while (my $row = $iter->()) {
+        push @res => $row;
+    }
+    return \@res;
+}
+
 sub emit_changes {
     my $self = shift;
     return $self unless $self->show_changes;
 
     # Emit the header.
-    my @changes = $self->engine->current_changes;
+    my $changes = _all $self->engine->current_changes;
     $self->comment('');
-    $self->comment(__n 'Change:', 'Changes:', @changes);
+    $self->comment(__n 'Change:', 'Changes:', @{ $changes });
 
     # Find the longest change name.
-    my $len    = max map { length $_->{change} } @changes;
+    my $len    = max map { length $_->{change} } @{ $changes };
     my $format = $self->date_format;
 
     # Emit each change.
@@ -146,7 +155,7 @@ sub emit_changes {
         ((' ') x ($len - length $_->{change})) || '',
         $_->{deployed_at}->as_string( format => $format ),
         $_->{deployed_by},
-    )) for @changes;
+    )) for @{ $changes };
 
     return $self;
 }
@@ -156,19 +165,19 @@ sub emit_tags {
     return $self unless $self->show_tags;
 
     # Emit the header.
-    my @tags = $self->engine->current_tags;
+    my $tags = _all $self->engine->current_tags;
     $self->comment('');
 
     # If no tags, say so and return.
-    unless (@tags) {
+    unless (@{ $tags }) {
         $self->comment(__ 'Tags: None.');
         return $self;
     }
 
-    $self->comment(__n 'Tag:', 'Tags:', @tags);
+    $self->comment(__n 'Tag:', 'Tags:', @{ $tags });
 
     # Find the longest tag name.
-    my $len    = max map { length $_->{tag} } @tags;
+    my $len    = max map { length $_->{tag} } @{ $tags };
     my $format = $self->date_format;
 
     # Emit each tag.
@@ -178,7 +187,7 @@ sub emit_tags {
         ((' ') x ($len - length $_->{tag})) || '',
         $_->{applied_at}->as_string( format => $format ),
         $_->{applied_by},
-    )) for @tags;
+    )) for @{ $tags };
 
     return $self;
 }

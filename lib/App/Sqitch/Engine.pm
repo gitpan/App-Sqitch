@@ -9,7 +9,7 @@ use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use namespace::autoclean;
 
-our $VERSION = '0.60';
+our $VERSION = '0.70';
 
 has sqitch => (
     is       => 'ro',
@@ -424,6 +424,11 @@ sub current_tags {
     hurl "$class has not implemented current_tags()";
 }
 
+sub search_events {
+    my $class = ref $_[0] || $_[0];
+    hurl "$class has not implemented search_events()";
+}
+
 __PACKAGE__->meta->make_immutable;
 no Moose;
 
@@ -764,10 +769,14 @@ An array reference of the names of associated tags.
 
 =head3 C<current_changes>
 
-  my @changes = $engine->current_changes;
+  my $iter = $engine->current_changes;
+  while (my $change = $iter->()) {
+      say '* ', $change->{change};
+  }
 
-Returns a list of hash references representing the currently deployed changes
-in reverse chronological order. The keys to each hash should include:
+Returns a code reference that iterates over a list of the currently deployed
+changes in reverse chronological order. Each change is represented by a hash
+reference containing the following keys:
 
 =over
 
@@ -792,10 +801,14 @@ Name of the user who deployed the change.
 
 =head3 C<current_tags>
 
-  my @tags = $engine->current_tags;
+  my $iter = $engine->current_tags;
+  while (my $tag = $iter->()) {
+      say '* ', $tag->{tag};
+  }
 
-Returns a list of hash references representing the currently applied tags, in
-reverse chronological order. The keys to each hash should include:
+Returns a code reference that iterates over a list of the currently deployed
+tags in reverse chronological order. Each tag is represented by a hash
+reference containing the following keys:
 
 =over
 
@@ -815,6 +828,87 @@ tag was applied.
 =item C<applied_by>
 
 Name of the user who) or applied the tag.
+
+=back
+
+=head3 C<search_events>
+
+  my $iter = $engine->search_events( %params );
+  while (my $change = $iter->()) {
+      say '* $change->{event}ed $change->{change}";
+  }
+
+Searches the deployment event log and returns an iterator code reference with
+the results. If no parameters are provided, a list of all events will be
+returned from the iterator reverse chronological order. The supported parameters
+are:
+
+=over
+
+=item C<event>
+
+An array of the type of event to search for. Allowed values are "deploy",
+"revert", and "fail".
+
+=item C<change>
+
+Limit the events to those with changes matching the specified regular
+expression.
+
+=item C<actor>
+
+Limit the events to those logged by the actors (users) with names matching the
+specified regular expression.
+
+=item C<limit>
+
+Limit the number of events to the specified number.
+
+=item C<offset>
+
+Skip the specified number of events.
+
+=item C<direction>
+
+Return the results in the specified order, which must be a value matching
+C</^(:?a|de)sc/i> for "ascending" or "descending".
+
+=back
+
+Each event is represented by a hash reference containing the following keys:
+
+=over
+
+=item C<event>
+
+The type of event, which is one of:
+
+=over
+
+=item C<deploy>
+
+=item C<revert>
+
+=item C<fail>
+
+=back
+
+=item C<change_id>
+
+The change ID.
+
+=item C<change>
+
+The name of the change.
+
+=item C<deployed_at>
+
+An L<App::Sqitch::DateTime> object representing the date and time at which the
+event was logged.
+
+=item C<deployed_by>
+
+Name of the user for whom the event was logged.
 
 =back
 

@@ -1,5 +1,16 @@
 Revision history for Perl extension App::Sqitch
 
+0.70  2012-07-12T13:24:13Z
+     - Changed the `current_changes()` and `current_tags()` Engine methods so
+       that they return iterator code references instead of lists.
+     - Added the `search_events()` Engine method, to search the event log.
+     - Added the `pager` attribute and `page()` methods to App::Sqitch.
+     - Added support for `strftime:` and `cldr:` options to the `status`
+       command's `--date-format` option.
+     - Added the `log` command.
+     - Added the `strftime:$string` and `cldr:$string` options to
+       `--date-format` in the `status` and `log` commands.
+
 0.60  2012-07-07T11:12:26Z
      - Removed some discussion of VCS integration, since it is not yet
        implemented, and it may be a while before it is.

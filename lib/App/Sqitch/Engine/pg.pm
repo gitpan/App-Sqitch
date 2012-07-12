@@ -13,7 +13,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Engine';
 
-our $VERSION = '0.60';
+our $VERSION = '0.70';
 
 has client => (
     is       => 'ro',
@@ -471,30 +471,98 @@ sub current_state {
 sub current_changes {
     my $self  = shift;
     my $dtcol = _ts2char 'deployed_at';
-    return grep { $_->{deployed_at} = _dt $_->{deployed_at} } @{
-        $self->_dbh->selectall_arrayref(qq{
-            SELECT change_id
-                 , change
-                 , deployed_by
-                 , $dtcol AS deployed_at
-              FROM changes
-             ORDER BY changes.deployed_at DESC
-        }, { Slice => {} }) || []
+    my $sth   = $self->_dbh->prepare(qq{
+        SELECT change_id
+             , change
+             , deployed_by
+             , $dtcol AS deployed_at
+          FROM changes
+         ORDER BY changes.deployed_at DESC
+    });
+    $sth->execute;
+    return sub {
+        my $row = $sth->fetchrow_hashref or return;
+        $row->{deployed_at} = _dt $row->{deployed_at};
+        return $row;
     };
 }
 
 sub current_tags {
     my $self  = shift;
     my $dtcol = _ts2char 'applied_at';
-    return grep { $_->{applied_at} = _dt $_->{applied_at} } @{
-        $self->_dbh->selectall_arrayref(qq{
-            SELECT tag_id
-                 , tag
-                 , applied_by
-                 , $dtcol AS applied_at
-              FROM tags
-             ORDER BY tags.applied_at DESC
-        }, { Slice => {} }) || []
+    my $sth   = $self->_dbh->prepare(qq{
+        SELECT tag_id
+             , tag
+             , applied_by
+             , $dtcol AS applied_at
+          FROM tags
+         ORDER BY tags.applied_at DESC
+    });
+    $sth->execute;
+    return sub {
+        my $row = $sth->fetchrow_hashref or return;
+        $row->{applied_at} = _dt $row->{applied_at};
+        return $row;
+    };
+}
+
+sub search_events {
+    my ( $self, %p ) = @_;
+    my $dtcol = _ts2char 'logged_at';
+
+    # Determine order direction.
+    my $dir = 'DESC';
+    if (my $d = delete $p{direction}) {
+        $dir = $d =~ /^ASC/i  ? 'ASC'
+             : $d =~ /^DESC/i ? 'DESC'
+             : hurl 'Search direction must be either "ASC" or "DESC"';
+    }
+
+    # Limit with regular expressions?
+    my (@wheres, @params);
+    for my $spec (
+        [ actor  => 'logged_by' ],
+        [ change => 'change'    ],
+    ) {
+        my $regex = delete $p{ $spec->[0] } // next;
+        push @wheres => "$spec->[1] ~ ?";
+        push @params => $regex;
+    }
+
+    # Match events?
+    if (my $e = delete $p{event} ) {
+        push @wheres => 'event = ANY(?)';
+        push @params => $e;
+    }
+
+    # Assemble the where clause.
+    my $where = @wheres
+        ? "\n         WHERE " . join( "\n               ", @wheres )
+        : '';
+
+    # Handle remaining parameters.
+    push @params, delete @p{ qw(limit offset) };
+    hurl 'Invalid parameters passed to search_events(): '
+        . join ', ', sort keys %p if %p;
+
+    # Prepare, execute, and return.
+    my $sth = $self->_dbh->prepare(qq{
+        SELECT event
+             , change_id
+             , change
+             , tags
+             , logged_by
+             , $dtcol AS logged_at
+          FROM events$where
+         ORDER BY events.logged_at $dir
+         LIMIT COALESCE(?::INT, NULL)
+        OFFSET COALESCE(?::INT, NULL)
+    });
+    $sth->execute(@params);
+    return sub {
+        my $row = $sth->fetchrow_hashref or return;
+        $row->{logged_at} = _dt $row->{logged_at};
+        return $row;
     };
 }
 

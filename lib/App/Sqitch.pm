@@ -21,7 +21,7 @@ use Moose::Util::TypeConstraints;
 use MooseX::Types::Path::Class;
 use namespace::autoclean;
 
-our $VERSION = '0.60';
+our $VERSION = '0.70';
 
 has plan_file => (
     is       => 'ro',
@@ -172,6 +172,28 @@ has uri => (
         require URI;
         return URI->new($uri);
     }
+);
+
+has pager => (
+    is       => 'ro',
+    required => 1,
+    lazy     => 1,
+    isa      => type('IO::Pager' => where {
+        # IO::Pager annoyingly just returns the file handle if there is no TTY.
+        eval { $_->isa('IO::Pager') } || ref $_ eq 'GLOB'
+    }),
+    default  => sub {
+        require IO::Pager;
+        # https://rt.cpan.org/Ticket/Display.html?id=78270
+        eval q{
+            sub IO::Pager::say {
+                my $self = shift;
+                CORE::say {$self->{real_fh}} @_ or die "Could not print to PAGER: $!\n";
+            }
+        } unless IO::Pager->can('say');
+
+        IO::Pager->new(\*STDOUT);
+    },
 );
 
 sub go {
@@ -379,6 +401,10 @@ sub _prepend {
     my $msg = join '', map { $_ // '' } @_;
     $msg =~ s/^/$prefix /gms;
     return $msg;
+}
+
+sub page {
+    shift->pager->say(@_);
 }
 
 sub trace {
@@ -599,11 +625,26 @@ C<sqitch config --get core.editor>.
 
 =head3 C<vent>
 
-  $sqitch->vent('core.editor=emacs');
+  $sqitch->vent('That was a misage.');
 
 Send a message to C<STDERR>, without regard to the verbosity. Should be used
 only for error messages to be printed before exiting with an error, such as
 when reverting failed changes.
+
+=head3 C<page>
+
+  $sqitch->page('Search results:');
+
+Like C<emit()>, but sends the output to a pager handle rather than C<STDOUT>.
+Unless there is no TTY (such as when output is being piped elsewhere), in
+which case it I<is> sent to C<STDOUT>. Meant to be used to send a lot of data
+to the user at once, such as when display the results of searching the event
+log:
+
+  $iter = $sqitch->engine->search_events;
+  while ( my $change = $iter->() ) {
+      $sqitch->page(join ' - ', @{ $change }{ qw(change_id event change) });
+  }
 
 =head3 C<warn>
 

@@ -258,8 +258,6 @@ subtest 'live database' => sub {
         plan skip_all => "Unable to connect to a database for testing: $_";
     };
 
-    plan 'no_plan';
-
     ok !$pg->initialized, 'Database should not yet be initialized';
     push @cleanup, 'DROP SCHEMA ' . $pg->sqitch_schema . ' CASCADE';
     ok $pg->initialize, 'Initialize the database';
@@ -300,8 +298,9 @@ subtest 'live database' => sub {
     like $@->previous_exception, qr/\QDBD::Pg::db do failed: /,
         'The DBI error should be in preview_exception';
     is $pg->current_state, undef, 'Current state should be undef';
-    is_deeply [ $pg->current_changes ], [], 'Should have no current changes';
-    is_deeply [ $pg->current_tags ], [], 'Should have no current tags';
+    is_deeply all( $pg->current_changes ), [], 'Should have no current changes';
+    is_deeply all( $pg->current_tags ), [], 'Should have no current tags';
+    is_deeply all( $pg->search_events ), [], 'Should have no events';
 
     ##########################################################################
     # Test log_deploy_change().
@@ -344,7 +343,7 @@ subtest 'live database' => sub {
         deployed_by => $pg->actor,
         tags        => ['@alpha'],
     }, 'The rest of the state should look right';
-    is_deeply [ $pg->current_changes ], [
+    is_deeply all( $pg->current_changes ), [
         {
             change_id   => $change->id,
             change      => 'users',
@@ -352,7 +351,7 @@ subtest 'live database' => sub {
             deployed_at => $dt,
         },
     ], 'Should have one current change';
-    is_deeply [ $pg->current_tags ], [
+    is_deeply all( $pg->current_tags ), [
         {
             tag_id     => $tag->id,
             tag        => '@alpha',
@@ -360,6 +359,15 @@ subtest 'live database' => sub {
             applied_by => $pg->actor,
         },
     ], 'Should have one current tags';
+    my @events = ({
+        event     => 'deploy',
+        change_id => $change->id,
+        change    => 'users',
+        tags      => ['@alpha'],
+        logged_by => $pg->actor,
+        logged_at => dt_for_event(0),
+    });
+    is_deeply all( $pg->search_events ), \@events, 'Should have one event';
 
     ##########################################################################
     # Test log_revert_change().
@@ -386,9 +394,19 @@ subtest 'live database' => sub {
     is $pg->name_for_change_id($change->id), undef,
         'name_for_change_id() should no longer return the change name';
     is $pg->current_state, undef, 'Current state should be undef again';
-    is_deeply [ $pg->current_changes ], [],
+    is_deeply all( $pg->current_changes ), [],
         'Should again have no current changes';
-    is_deeply [ $pg->current_tags ], [], 'Should again have no current tags';
+    is_deeply all( $pg->current_tags ), [], 'Should again have no current tags';
+
+    unshift @events => {
+        event     => 'revert',
+        change_id => $change->id,
+        change    => 'users',
+        tags      => ['@alpha'],
+        logged_by => $pg->actor,
+        logged_at => dt_for_event(1),
+    };
+    is_deeply all( $pg->search_events ), \@events, 'Should have two events';
 
     ##########################################################################
     # Test log_fail_change().
@@ -413,8 +431,24 @@ subtest 'live database' => sub {
         'SELECT tag_id, tag, change_id, applied_by FROM tags'
     ), [], 'Should still have no tag records';
     is $pg->current_state, undef, 'Current state should still be undef';
-    is_deeply [ $pg->current_changes ], [], 'Should still have no current changes';
-    is_deeply [ $pg->current_tags ], [], 'Should still have no current tags';
+    is_deeply all( $pg->current_changes ), [], 'Should still have no current changes';
+    is_deeply all( $pg->current_tags ), [], 'Should still have no current tags';
+
+    unshift @events => {
+        event     => 'fail',
+        change_id => $change->id,
+        change    => 'users',
+        tags      => ['@alpha'],
+        logged_by => $pg->actor,
+        logged_at => dt_for_event(2),
+    };
+    is_deeply all( $pg->search_events ), \@events, 'Should have 3 events';
+
+    # From here on in, use a different actor.
+    my $actor1 = $pg->actor;
+    my $actor2 = "$actor1\_number_2";
+    my $pg_mocker = Test::MockModule->new($CLASS);
+    $pg_mocker->mock( actor =>  $actor2 );
 
     ##########################################################################
     # Test a change with dependencies.
@@ -438,11 +472,11 @@ subtest 'live database' => sub {
     is_deeply $pg->_dbh->selectall_arrayref(
         'SELECT event, change_id, change, tags, logged_by FROM events ORDER BY logged_at'
     ), [
-        ['deploy', $change->id,  'users',   ['@alpha'], $pg->actor],
-        ['revert', $change->id,  'users',   ['@alpha'], $pg->actor],
-        ['fail',   $change->id,  'users',   ['@alpha'], $pg->actor],
-        ['deploy', $change->id,  'users',   ['@alpha'], $pg->actor],
-        ['deploy', $change2->id, 'widgets', [],         $pg->actor],
+        ['deploy', $change->id,  'users',   ['@alpha'], $actor1],
+        ['revert', $change->id,  'users',   ['@alpha'], $actor1],
+        ['fail',   $change->id,  'users',   ['@alpha'], $actor1],
+        ['deploy', $change->id,  'users',   ['@alpha'], $actor2],
+        ['deploy', $change2->id, 'widgets', [],         $actor2],
     ], 'The new change deploy should have been logged';
 
     is $pg->name_for_change_id($change2->id), 'widgets',
@@ -458,7 +492,7 @@ subtest 'live database' => sub {
         deployed_by => $pg->actor,
         tags        => [],
     }, 'The state should reference new change';
-    is_deeply [ $pg->current_changes ], [
+    is_deeply all( $pg->current_changes ), [
         {
             change_id   => $change2->id,
             change      => 'widgets',
@@ -472,7 +506,7 @@ subtest 'live database' => sub {
             deployed_at => dt_for_change( $change->id ),
         },
     ], 'Should have two current changes in reverse chronological order';
-    is_deeply [ $pg->current_tags ], [
+    is_deeply all( $pg->current_tags ), [
         {
             tag_id     => $tag->id,
             tag        => '@alpha',
@@ -480,6 +514,23 @@ subtest 'live database' => sub {
             applied_by => $pg->actor,
         },
     ], 'Should again have one current tags';
+
+    unshift @events => {
+        event     => 'deploy',
+        change_id => $change2->id,
+        change    => 'widgets',
+        tags      => [],
+        logged_by => $actor2,
+        logged_at => dt_for_event(4),
+    }, {
+        event     => 'deploy',
+        change_id => $change->id,
+        change    => 'users',
+        tags      => ['@alpha'],
+        logged_by => $actor2,
+        logged_at => dt_for_event(3),
+    };
+    is_deeply all( $pg->search_events ), \@events, 'Should have 5 events';
 
     ##########################################################################
     # Test conflicts and requires.
@@ -535,7 +586,7 @@ subtest 'live database' => sub {
         deployed_by => $pg->actor,
         tags        => [],
     }, 'The new state should reference latest change';
-    is_deeply [ $pg->current_changes ], [
+    is_deeply all( $pg->current_changes ), [
         {
             change_id   => $change2->id,
             change      => 'widgets',
@@ -549,7 +600,7 @@ subtest 'live database' => sub {
             deployed_at => dt_for_change( $change->id ),
         },
     ], 'Should still have two current changes in reverse chronological order';
-    is_deeply [ $pg->current_tags ], [
+    is_deeply all( $pg->current_tags ), [
         {
             tag_id     => $tag->id,
             tag        => '@alpha',
@@ -557,6 +608,23 @@ subtest 'live database' => sub {
             applied_by => $pg->actor,
         },
     ], 'Should still have one current tags';
+
+    unshift @events => {
+        event     => 'deploy',
+        change_id => $change2->id,
+        change    => 'widgets',
+        tags      => [],
+        logged_by => $actor2,
+        logged_at => dt_for_event(6),
+    }, {
+        event     => 'revert',
+        change_id => $change2->id,
+        change    => 'widgets',
+        tags      => [],
+        logged_by => $actor2,
+        logged_at => dt_for_event(5),
+    };
+    is_deeply all( $pg->search_events ), \@events, 'Should have 7 events';
 
     ##########################################################################
     # Deploy the new changes with two tags.
@@ -576,7 +644,7 @@ subtest 'live database' => sub {
         tags        => [qw(@beta @gamma)],
     }, 'Barney should be in the current state';
 
-    is_deeply [ $pg->current_changes ], [
+    is_deeply all( $pg->current_changes ), [
         {
             change_id   => $barney->id,
             change      => 'barney',
@@ -604,7 +672,7 @@ subtest 'live database' => sub {
     ], 'Should have all four current changes in reverse chron order';
 
     my ($beta, $gamma) = $barney->tags;
-    is_deeply [ $pg->current_tags ], [
+    is_deeply all( $pg->current_tags ), [
         {
             tag_id     => $gamma->id,
             tag        => '@gamma',
@@ -625,6 +693,109 @@ subtest 'live database' => sub {
         },
     ], 'Should now have three current tags in reverse chron order';
 
+    unshift @events => {
+        event     => 'deploy',
+        change_id => $barney->id,
+        change    => 'barney',
+        tags      => ['@beta', '@gamma'],
+        logged_by => $actor2,
+        logged_at => dt_for_event(8),
+    }, {
+        event     => 'deploy',
+        change_id => $fred->id,
+        change    => 'fred',
+        tags      => [],
+        logged_by => $actor2,
+        logged_at => dt_for_event(7),
+    };
+    is_deeply all( $pg->search_events ), \@events, 'Should have 9 events';
+
+    ##########################################################################
+    # Test search_events() parameters.
+    is_deeply all( $pg->search_events(limit => 2) ), [ @events[0..1] ],
+        'The limit param to search_events should work';
+
+    is_deeply all( $pg->search_events(offset => 4) ), [ @events[4..$#events] ],
+        'The offset param to search_events should work';
+
+    is_deeply all( $pg->search_events(limit => 3, offset => 4) ), [ @events[4..6] ],
+        'The limit and offset params to search_events should work together';
+
+    is_deeply all( $pg->search_events( direction => 'DESC' ) ), \@events,
+        'Should work to set direction "DESC" in search_events';
+    is_deeply all( $pg->search_events( direction => 'desc' ) ), \@events,
+        'Should work to set direction "desc" in search_events';
+    is_deeply all( $pg->search_events( direction => 'descending' ) ), \@events,
+        'Should work to set direction "descending" in search_events';
+
+    is_deeply all( $pg->search_events( direction => 'ASC' ) ),
+        [ reverse @events ],
+        'Should work to set direction "ASC" in search_events';
+    is_deeply all( $pg->search_events( direction => 'asc' ) ),
+        [ reverse @events ],
+        'Should work to set direction "asc" in search_events';
+    is_deeply all( $pg->search_events( direction => 'ascending' ) ),
+        [ reverse @events ],
+        'Should work to set direction "ascending" in search_events';
+    throws_ok { $pg->search_events( direction => 'foo' ) } 'App::Sqitch::X',
+        'Should catch exception for invalid search direction';
+    is $@->ident, 'DEV', 'Search direction error ident should be "DEV"';
+    is $@->message, 'Search direction must be either "ASC" or "DESC"',
+        'Search direction error message should be correct';
+
+    is_deeply all( $pg->search_events( actor => $actor1 ) ), \@events,
+        'The actor param to search_events should work';
+    is_deeply all( $pg->search_events( actor => "$actor1\_number" ) ),
+        [ @events[0..5] ],
+        'The actor param to search_events should work as a regex';
+    is_deeply all( $pg->search_events( actor => "$actor1\_number\$" ) ), [],
+        qq{Actor regex should fail to match with "$actor1\_number\$"};
+
+    is_deeply all( $pg->search_events( change => 'users' ) ),
+        [ @events[5..$#events] ],
+        'The change param to search_events should work with "users"';
+    is_deeply all( $pg->search_events( change => 'widgets' ) ),
+        [ @events[2..4] ],
+        'The change param to search_events should work with "widgets"';
+    is_deeply all( $pg->search_events( change => 'fred' ) ),
+        [ $events[1] ],
+        'The change param to search_events should work with "fred"';
+    is_deeply all( $pg->search_events( change => 'fre$' ) ), [],
+        'The change param to search_events should return nothing for "fre$"';
+    is_deeply all( $pg->search_events( change => '(er|re)' ) ),
+        [@events[1, 5..8]],
+        'The change param to search_events should return match "(er|re)"';
+
+    is_deeply all( $pg->search_events( event => [qw(deploy)] ) ),
+        [ grep { $_->{event} eq 'deploy' } @events ],
+        'The event param should work with "deploy"';
+    is_deeply all( $pg->search_events( event => [qw(revert)] ) ),
+        [ grep { $_->{event} eq 'revert' } @events ],
+        'The event param should work with "revert"';
+    is_deeply all( $pg->search_events( event => [qw(fail)] ) ),
+        [ grep { $_->{event} eq 'fail' } @events ],
+        'The event param should work with "fail"';
+    is_deeply all( $pg->search_events( event => [qw(revert fail)] ) ),
+        [ grep { $_->{event} ne 'deploy' } @events ],
+        'The event param should work with "revert" and "fail"';
+    is_deeply all( $pg->search_events( event => [qw(deploy revert fail)] ) ),
+        \@events,
+        'The event param should work with "deploy", "revert", and "fail"';
+    is_deeply all( $pg->search_events( event => ['foo'] ) ), [],
+        'The event param should return nothing for "foo"';
+
+    throws_ok { $pg->search_events(foo => 1) } 'App::Sqitch::X',
+        'Should catch exception for invalid search param';
+    is $@->ident, 'DEV', 'Invalid search param error ident should be "DEV"';
+    is $@->message, 'Invalid parameters passed to search_events(): foo',
+        'Invalid search param error message should be correct';
+
+    throws_ok { $pg->search_events(foo => 1, bar => 2) } 'App::Sqitch::X',
+        'Should catch exception for invalid search params';
+    is $@->ident, 'DEV', 'Invalid search params error ident should be "DEV"';
+    is $@->message, 'Invalid parameters passed to search_events(): bar, foo',
+        'Invalid search params error message should be correct';
+
     ##########################################################################
     # Test begin_work() and finish_work().
     can_ok $pg, qw(begin_work finish_work);
@@ -642,6 +813,7 @@ subtest 'live database' => sub {
     ok $pg->finish_work, 'Finish work';
     ok !$txn, 'Should have committed a transaction';
     $mock_dbh->unmock_all;
+
 };
 
 sub dt_for_change {
@@ -656,6 +828,23 @@ sub dt_for_tag {
     my $col = $ts2char->('applied_at');
     $dtfunc->($pg->_dbh->selectcol_arrayref(
         "SELECT $col FROM tags WHERE tag_id = ?",
+        undef, shift
+    )->[0]);
+}
+
+sub all {
+    my $iter = shift;
+    my @res;
+    while (my $row = $iter->()) {
+        push @res => $row;
+    }
+    return \@res;
+}
+
+sub dt_for_event {
+    my $col = $ts2char->('logged_at');
+    $dtfunc->($pg->_dbh->selectcol_arrayref(
+        "SELECT $col FROM events ORDER BY logged_at DESC OFFSET ? LIMIT 1",
         undef, shift
     )->[0]);
 }

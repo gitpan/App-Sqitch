@@ -11,6 +11,7 @@ lib/App/Sqitch/Command/config.pm
 lib/App/Sqitch/Command/deploy.pm
 lib/App/Sqitch/Command/help.pm
 lib/App/Sqitch/Command/init.pm
+lib/App/Sqitch/Command/log.pm
 lib/App/Sqitch/Command/revert.pm
 lib/App/Sqitch/Command/rework.pm
 lib/App/Sqitch/Command/status.pm
@@ -40,6 +41,8 @@ lib/sqitch-help-usage.pod
 lib/sqitch-help.pod
 lib/sqitch-init-usage.pod
 lib/sqitch-init.pod
+lib/sqitch-log-usage.pod
+lib/sqitch-log.pod
 lib/sqitch-revert-usage.pod
 lib/sqitch-revert.pod
 lib/sqitch-rework-usage.pod
@@ -79,6 +82,7 @@ t/lib/App/Sqitch/Engine/good.pm
 t/lib/MockOutput.pm
 t/linelist.t
 t/local.conf
+t/log.t
 t/options.t
 t/pg.t
 t/pg/deploy/users.sql
