@@ -5,6 +5,8 @@ use utf8;
 use namespace::autoclean;
 use Moose;
 use Moose::Meta::Attribute::Native;
+use App::Sqitch::X qw(hurl);
+use Locale::TextDomain qw(App-Sqitch);
 
 has name => (
     is       => 'ro',
@@ -47,7 +49,7 @@ has ropspace => (
     default  => '',
 );
 
-has comment => (
+has note => (
     is       => 'ro',
     isa      => 'Str',
     required => 1,
@@ -59,8 +61,73 @@ has plan => (
     isa      => 'App::Sqitch::Plan',
     weak_ref => 1,
     required => 1,
-    handles  => [qw(sqitch)],
+    handles  => [qw(sqitch project uri)],
 );
+
+my %escape = (
+    "\n" => '\\n',
+    "\r" => '\\r',
+    '\\' => '\\\\',
+);
+
+my %unescape = reverse %escape;
+
+sub BUILDARGS {
+    my $class = shift;
+    my $p = @_ == 1 && ref $_[0] ? { %{ +shift } } : { @_ };
+    if (my $note = $p->{note}) {
+        # Trim and then encode newlines.
+        $note =~ s/\A\v+//;
+        $note =~ s/\v+\z//;
+        $note =~ s/(\\[\\nr])/$unescape{$1}/gl;
+        $p->{note} = $note;
+    }
+    return $p;
+}
+
+sub request_note {
+    my ( $self, %p ) = @_;
+    my $note = $self->note // '';
+    return $note if $note =~ /\S/;
+
+    # Edit in a file.
+    require File::Temp;
+    my $tmp = File::Temp->new;
+    ( my $prompt = $self->note_prompt(%p) ) =~ s/^/# /gms;
+    $tmp->print( $/, $prompt, $/ );
+    $tmp->close;
+
+    $self->sqitch->run( $self->sqitch->editor, "$tmp" );
+
+    open my $fh, '<:encoding(UTF-8)', $tmp or hurl add => __x(
+        'Cannot open {file}: {error}',
+        file  => $tmp,
+        error => $!
+    );
+
+    $note = join '', grep { $_ !~ /^\s*#/ } <$fh>;
+    hurl {
+        ident   => 'plan',
+        message => __ 'Aborting due to empty note',
+        exitval => 1,
+    } unless $note =~ /\S/;
+
+    # Trim the note.
+    $note =~ s/\A\v+//;
+    $note =~ s/\v+\z//;
+
+    # Set the note via the meta API, bypassing the read-only constraint.
+    $self->meta->find_attribute_by_name('note')->set_value($self, $note);
+    return $note;
+}
+
+sub note_prompt {
+    my ( $self, %p ) = @_;
+    __x(
+        "Write a {command} note.\nLines starting with '#' will be ignored.",
+        command => $p{for}
+    );
+}
 
 sub format_name {
     shift->name;
@@ -76,9 +143,11 @@ sub format_content {
     join '', $self->format_operator, $self->format_name;
 }
 
-sub format_comment {
-    my $comment = shift->comment;
-    return length $comment ? "#$comment" : '';
+sub format_note {
+    my $note = shift->note;
+    return '' unless length $note;
+    $note =~ s/([\r\n\\])/$escape{$1}/g;
+    return "# $note";
 }
 
 sub as_string {
@@ -86,7 +155,7 @@ sub as_string {
     return $self->lspace
          . $self->format_content
          . $self->rspace
-         . $self->format_comment;
+         . $self->format_note;
 }
 
 __PACKAGE__->meta->make_immutable;
@@ -153,11 +222,11 @@ The white space to the right of the operator, if any.
 =item C<rspace>
 
 The white space after the name until the end of the line or the start of a
-comment.
+note.
 
-=item C<comment>
+=item C<note>
 
-A comment. Does not include the leading C<#>, but does include any white space
+A note. Does not include the leading C<#>, but does include any white space
 immediate after the C<#> when the plan file is parsed.
 
 =back
@@ -187,15 +256,15 @@ Returns the white space from the beginning of the line, if any.
   my $rspace = $line->rspace.
 
 Returns the white space after the name until the end of the line or the start
-of a comment.
+of a note.
 
-=head3 C<comment>
+=head3 C<note>
 
-  my $comment = $line->comment.
+  my $note = $line->note.
 
-Returns the comment. Does not include the leading C<#>, but does include any
+Returns the note. Does not include the leading C<#>, but does include any
 white space immediate after the C<#> when the plan file is parsed. Returns the
-empty string if there is no comment.
+empty string if there is no note.
 
 =head2 Instance Methods
 
@@ -222,11 +291,12 @@ space exists, an empty string is returned. Used internally by C<as_string()>.
 Formats and returns the main content of the line. This consists of an operator
 and its associated white space, if any, followed by the formatted name.
 
-=head3 C<format_comment>
+=head3 C<format_note>
 
-  my $comment = $line->format_comment;
+  my $note = $line->format_note;
 
-Returns the comment formatted for output. That is, with a leading C<#>.
+Returns the note formatted for output. That is, with a leading C<#> and
+newlines encoded.
 
 =head3 C<as_string>
 
@@ -234,6 +304,25 @@ Returns the comment formatted for output. That is, with a leading C<#>.
 
 Returns the full stringification of the line, suitable for output to a plan
 file.
+
+=head3 C<request_note>
+
+  my $note = $line->request_note( for => 'add' );
+
+Request the note from the user. Pass in the name of the command for which the
+note is requested via the C<for> parameter. If there is a note, it is simply
+returned. Otherwise, an editor will be launched and the user asked to write
+one. Once the editor exits, the note will be retrieved from the file, saved,
+and returned. If no note was written, an exception will be thrown with an
+C<extival> of 1.
+
+=head3 C<note_prompt>
+
+  my $prompt = $line->note_prompt( for => 'tag' );
+
+Returns a localized string for use in the temporary file created by
+C<request_note()>. Pass in the name of the command for which to prompt via the
+C<for> parameter.
 
 =head1 See Also
 

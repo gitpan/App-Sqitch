@@ -15,14 +15,38 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.71';
+our $VERSION = '0.80';
 
 sub execute {
-    my $self = shift;
+    my ( $self, $project ) = @_;
+    $self->usage unless $project;
     $self->write_config;
-    $self->write_plan;
+    $self->write_plan($project);
     $self->make_directories;
     return $self;
+}
+
+has uri => (
+    is       => 'ro',
+    isa      => 'Maybe[URI]',
+    required => 0,
+);
+
+sub options {
+    return qw(
+        uri=s
+    );
+}
+
+sub configure {
+    my ( $class, $config, $opt ) = @_;
+
+    if ( my $uri = $opt->{uri} ) {
+        require URI;
+        $opt->{uri} = URI->new($uri);
+    }
+
+    return $opt;
 }
 
 sub make_directories {
@@ -49,7 +73,7 @@ sub make_directories {
 }
 
 sub write_plan {
-    my $self   = shift;
+    my ( $self, $project ) = @_;
     my $sqitch = $self->sqitch;
     my $file   = $sqitch->plan_file;
     return $self if -f $file;
@@ -60,7 +84,11 @@ sub write_plan {
         error => $!,
     );
     require App::Sqitch::Plan;
-    $fh->print('%syntax-version=', App::Sqitch::Plan::SYNTAX_VERSION(), $/, $/);
+    $fh->print(
+        '%syntax-version=', App::Sqitch::Plan::SYNTAX_VERSION(), $/,
+        '%project=', $project, $/,
+        ( $self->uri ? ('%uri=', $self->uri->canonical, $/) : () ), $/,
+    );
     $fh->close or hurl add => __x(
         'Error closing {file}: {error}',
         file  => $file,
@@ -84,19 +112,6 @@ sub write_config {
     }
 
     my ( @vars, @comments );
-
-    # Start with a URI.
-    my $uri = try { $sqitch->uri } || do {
-        require UUID::Tiny;
-        require URI;
-        URI->new(
-            'urn:uuid:' . UUID::Tiny::create_uuid_as_string(UUID::Tiny::UUID_V4())
-        );
-    };
-    push @vars => {
-        key   => 'core.uri',
-        value => $uri->canonical,
-    };
 
     # Write the engine.
     my $engine = $sqitch->engine;
@@ -169,7 +184,8 @@ sub write_config {
         while ( my ( $key, $type ) = each %config_vars ) {
 
             # Was it passed as an option?
-            if ( my $attr = $meta->find_attribute_by_name($key) ) {
+            my $core_key = $key =~ /^db_/ ? $key : "db_$key";
+            if ( my $attr = $meta->find_attribute_by_name($core_key) ) {
                 if ( my $val = $attr->get_value($sqitch) ) {
 
                     # It was passed as an option, so record that.
@@ -262,7 +278,7 @@ options for the C<config> command.
 
 =head3 C<execute>
 
-  $init->execute;
+  $init->execute($project);
 
 Executes the C<init> command.
 
@@ -280,7 +296,7 @@ Writes out the configuration file. Called by C<execute()>.
 
 =head3 C<write_plan>
 
-  $init->write_plan;
+  $init->write_plan($project);
 
 Writes out the plan file. Called by C<execute()>.
 

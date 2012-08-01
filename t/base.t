@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 77;
+use Test::More tests => 86;
 #use Test::More 'no_plan';
 use Test::MockModule;
 use Path::Class;
@@ -18,6 +18,10 @@ BEGIN {
     use_ok $CLASS or die;
 }
 
+$ENV{SQITCH_CONFIG} = 'nonexistent.conf';
+$ENV{SQITCH_USER_CONFIG} = 'nonexistent.user';
+$ENV{SQITCH_SYSTEM_CONFIG} = 'nonexistent.sys';
+
 can_ok $CLASS, qw(
     go
     new
@@ -25,11 +29,13 @@ can_ok $CLASS, qw(
     plan
     engine
     _engine
-    client
+    user_name
+    user_email
+    db_client
     db_name
-    username
-    host
-    port
+    db_username
+    db_host
+    db_port
     top_dir
     deploy_dir
     revert_dir
@@ -45,11 +51,11 @@ isa_ok my $sqitch = $CLASS->new, $CLASS, 'A new object';
 for my $attr (qw(
     _engine
     engine
-    client
-    username
+    db_client
+    db_username
     db_name
-    host
-    port
+    db_host
+    db_port
 )) {
     is $sqitch->$attr, undef, "$attr should be undef";
 }
@@ -63,13 +69,33 @@ is $sqitch->deploy_dir, dir(qw(deploy)), 'Default deploy_dir should be ./sql/dep
 is $sqitch->revert_dir, dir(qw(revert)), 'Default revert_dir should be ./sql/revert';
 is $sqitch->test_dir, dir(qw(test)), 'Default test_dir should be ./sql/test';
 isa_ok $sqitch->plan, 'App::Sqitch::Plan';
-throws_ok { $sqitch->uri } 'App::Sqitch::X',
-    'Should get error for missing URI';
-is $@->ident, 'core', 'Should be a "core" exception';
-is $@->message, __x(
-    'Missing project URI. Run {command} to add a URI',
-    command => '`sqitch config core.uri URI`'
-), 'Should have localized error message about missing URI';
+is $sqitch->user_name, do {
+    require User::pwent;
+    (User::pwent::getpwnam(getlogin)->gecos)[0];
+}, 'Default user_name should be set from system';
+is $sqitch->user_email, do {
+    require Sys::Hostname;
+    getlogin . '@' . Sys::Hostname::hostname();
+}, 'Default user_email should be set from system';
+
+# Test invalid user name and email values.
+throws_ok { $CLASS->new(user_name => 'foo<bar') } 'App::Sqitch::X',
+    'Should get error for user name containing "<"';
+is $@->ident, 'user', 'Invalid user name error ident should be "user"';
+is $@->message, __ 'User name may not contain "<" or start with "["',
+    'Invalid user name error message should be correct';
+
+throws_ok { $CLASS->new(user_name => '[foobar]') } 'App::Sqitch::X',
+    'Should get error for user name starting with "["';
+is $@->ident, 'user', 'Second Invalid user name error ident should be "user"';
+is $@->message, __ 'User name may not contain "<" or start with "["',
+    'Second Invalid user name error message should be correct';
+
+throws_ok { $CLASS->new(user_email => 'foo>bar') } 'App::Sqitch::X',
+    'Should get error for user email containing ">"';
+is $@->ident, 'user', 'Invalid user email error ident should be "user"';
+is $@->message, __ 'User email may not contain ">"',
+    'Invalid user email error message should be correct';
 
 ##############################################################################
 # Test go().
@@ -79,6 +105,7 @@ GO: {
     my $ret = 1;
     $mock->mock(execute => sub { ($cmd, @params) = @_; $ret });
     chdir 't';
+    local $ENV{SQITCH_CONFIG} = 'sqitch.conf';
     local $ENV{SQITCH_USER_CONFIG} = 'user.conf';
     local @ARGV = qw(--engine sqlite help config);
     is +App::Sqitch->go, 0, 'Should get 0 from go()';
@@ -96,8 +123,10 @@ GO: {
         'Should have local config overriding user';
     is $config->get(key => 'core.pg.host'), 'localhost',
         'Should fall back on user config';
-    is $sqitch->uri, URI->new('https://github.com/theory/sqitch/'),
-        'Should read URI from config file';
+    is $sqitch->user_name, 'Michael Stonebraker',
+        'Should have read user name from configuration';
+    is $sqitch->user_email, 'michael@example.com',
+        'Should have read user email from configuration';
 
     # Now make it die.
     sub puke { App::Sqitch::X->new(@_) } # Ensures we have trace frames.

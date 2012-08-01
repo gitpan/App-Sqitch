@@ -21,44 +21,58 @@ BEGIN {
     $ENV{ANSI_COLORS_DISABLED} = 1 unless CAN_OUTPUT_COLOR;
 }
 
-our $VERSION = '0.71';
+our $VERSION = '0.80';
 
 my %FORMATS;
 $FORMATS{raw} = <<EOF;
-event     %e
-change    %h%T
-name      %c
-date      %{iso}d
-committer %a
+%{:event}C%e %H%{reset}C%T
+name      %n
+%{requires}a%{conflicts}aplanner   %{name}p <%{email}p>
+planned   %{date:raw}p
+committer %{name}c <%{email}c>
+committed %{date:raw}c
+
+%{    }B
 EOF
 
 $FORMATS{full} = <<EOF;
-%{yellow}C%{change}_ %h%{reset}C%T
-%{event}_ %e
-%{name}_ %c
-%{date}_ %d
-%{by}_ %a
+%{:event}C%L %h%{reset}C%T
+%{name}_ %n
+%R%X%{planner}_ %p
+%{planned}_ %{date}p
+%{committer}_ %c
+%{committed}_ %{date}c
+
+%{    }B
 EOF
 
 $FORMATS{long} = <<EOF;
-%{yellow}C%L %h%{reset}C%T
-%{name}_ %c
-%{date}_ %d
-%{by}_ %a
+%{:event}C%L %h%{reset}C%T
+%{name}_ %n
+%{planner}_ %p
+%{committer}_ %c
+
+%{    }B
 EOF
 
 $FORMATS{medium} = <<EOF;
-%{yellow}C%L %h%{reset}C%T
-%{name}_ %c
-%{date}_ %d
+%{:event}C%L %h%{reset}C
+%{name}_ %n
+%{committer}_ %c
+%{date}_ %{date}c
+
+%{    }B
 EOF
 
 $FORMATS{short} = <<EOF;
-%{yellow}C%h%{reset}C
-%{short}d - %l %c - %a
+%{:event}C%L %h%{reset}C
+%{name}_ %n
+%{committer}_ %c
+
+%{    }s
 EOF
 
-$FORMATS{oneline} = '%h %l %c';
+$FORMATS{oneline} = '%{:event}C%h %l%{reset}C %n %s';
 
 has event => (
     is      => 'ro',
@@ -139,23 +153,29 @@ has formatter => (
                         __ 'Deploy' when 'deploy';
                         __ 'Revert' when 'revert';
                         __ 'Fail'   when 'fail';
-                    };
+                    }
                 },
                 l => sub {
                     given ($_[0]->{event}) {
                         __ 'deploy' when 'deploy';
                         __ 'revert' when 'revert';
                         __ 'fail'   when 'fail';
-                    };
+                    }
                 },
                 _ => sub {
                     given ($_[1]) {
                         __ 'Event:    ' when 'event';
                         __ 'Change:   ' when 'change';
                         __ 'Committer:' when 'committer';
+                        __ 'Planner:  ' when 'planner';
                         __ 'By:       ' when 'by';
                         __ 'Date:     ' when 'date';
+                        __ 'Committed:' when 'committed';
+                        __ 'Planned:  ' when 'planned';
                         __ 'Name:     ' when 'name';
+                        __ 'Email:    ' when 'email';
+                        __ 'Requires: ' when 'requires';
+                        __ 'Conflicts:' when 'conflicts';
                         hurl log => __ 'No label passed to the _ format'
                             when undef;
                     };
@@ -167,8 +187,28 @@ has formatter => (
                     }
                     return $_[0]->{change_id};
                 },
-                c => sub { $_[0]->{change} },
-                a => sub { $_[0]->{committed_by} },
+                n => sub { $_[0]->{change} },
+
+                c => sub {
+                    return "$_[0]->{committer_name} <$_[0]->{committer_email}>"
+                        unless defined $_[1];
+                    return $_[0]->{committer_name}  if $_[1] ~~ [qw(n name)];
+                    return $_[0]->{committer_email} if $_[1] ~~ [qw(e email)];
+                    return $_[0]->{committed_at}->as_string(
+                        format => $_[1] || $self->date_format
+                    ) if $_[1] =~ s/^d(?:ate)?(?::|$)//;
+                },
+
+                p => sub {
+                    return "$_[0]->{planner_name} <$_[0]->{planner_email}>"
+                        unless defined $_[1];
+                    return $_[0]->{planner_name}  if $_[1] ~~ [qw(n name)];
+                    return $_[0]->{planner_email} if $_[1] ~~ [qw(e email)];
+                    return $_[0]->{planned_at}->as_string(
+                        format => $_[1] || $self->date_format
+                    ) if $_[1] =~ s/^d(?:ate)?(?::|$)//;
+                },
+
                 t => sub {
                     @{ $_[0]->{tags} }
                         ? ' ' . join $_[1] || ', ' => @{ $_[0]->{tags} }
@@ -179,18 +219,72 @@ has formatter => (
                         ? ' (' . join($_[1] || ', ' => @{ $_[0]->{tags} }) . ')'
                         : '';
                 },
-                n => sub { "\n" },
-                d => sub {
-                    shift->{committed_at}->as_string(
-                        format => shift || $self->date_format
-                    )
-                },
+                v => sub { "\n" },
                 C => sub {
+                    if (($_[1] // '') eq ':event') {
+                        # Select a color based on some attribute.
+                        return color $_[0]->{event} eq 'deploy' ? 'green'
+                                   : $_[0]->{event} eq 'revert' ? 'blue'
+                                   : 'red';
+                    }
                     hurl log => __x(
                         '{color} is not a valid ANSI color', color => $_[1]
                     ) unless $_[1] && colorvalid $_[1];
                     color $_[1];
                 },
+                s => sub {
+                    ( my $s = $_[0]->{note} ) =~ s/\v.*//ms;
+                    return ($_[1] // '') . $s;
+                },
+                b => sub {
+                    return '' unless $_[0]->{note} =~ /\v/;
+                    ( my $b = $_[0]->{note} ) =~ s/^.+\v+//;
+                    $b =~ s/^/$_[1]/gms if defined $_[1] && length $b;
+                    return $b;
+                },
+                B => sub {
+                    return $_[0]->{note} unless defined $_[1];
+                    ( my $note = $_[0]->{note} ) =~ s/^/$_[1]/gms;
+                    return $note;
+                },
+                r => sub {
+                    @{ $_[0]->{requires} }
+                        ? ' ' . join $_[1] || ', ' => @{ $_[0]->{requires} }
+                        : '';
+                },
+                R => sub {
+                    return '' unless @{ $_[0]->{requires} };
+                    return __ 'Requires: ' . ' ' . join(
+                        $_[1] || ', ' => @{ $_[0]->{requires} }
+                    ) . "\n";
+                },
+                x => sub {
+                    @{ $_[0]->{conflicts} }
+                        ? ' ' . join $_[1] || ', ' => @{ $_[0]->{conflicts} }
+                        : '';
+                },
+                X => sub {
+                    return '' unless @{ $_[0]->{conflicts} };
+                    return __ 'Conflicts:' . ' ' . join(
+                        $_[1] || ', ' => @{ $_[0]->{conflicts} }
+                    ) . "\n";
+                },
+                a => sub {
+                    hurl log => __x(
+                        '{attr} is not a valid change attribute', attr => $_[1]
+                    ) unless $_[1] && exists $_[0]->{ $_[1] };
+                    my $val = $_[0]->{ $_[1] } // return '';
+
+                    if (ref $val eq 'ARRAY') {
+                        return '' unless @{ $val };
+                        $val = join ', ' => @{ $val };
+                    } elsif (eval { $val->isa('App::Sqitch::DateTime') }) {
+                        $val = $val->as_string( format => 'raw' );
+                    }
+
+                    my $sp = ' ' x (9 - length $_[1]);
+                    return "$_[1]$sp $val\n";
+                }
             },
         });
     }

@@ -6,6 +6,8 @@ use namespace::autoclean;
 use parent 'App::Sqitch::Plan::Line';
 use Encode;
 use Moose;
+use App::Sqitch::DateTime;
+use Locale::TextDomain qw(App-Sqitch);
 
 has _requires => (
     is       => 'ro',
@@ -31,7 +33,7 @@ has pspace => (
     is       => 'ro',
     isa      => 'Str',
     required => 1,
-    default  => '',
+    default  => ' ',
 );
 
 has since_tag => (
@@ -90,16 +92,12 @@ has info => (
     lazy     => 1,
     default  => sub {
         my $self = shift;
-
-        my @since;
-        if (my $tag = $self->since_tag) {
-            @since = ('since ' . $tag->id);
-        }
-
         return join "\n", (
-            'project ' . $self->sqitch->uri->canonical,
-            'change '    . $self->format_name,
-            @since,
+            'project ' . $self->project,
+            ( $self->uri ? ( 'uri ' . $self->uri->canonical ) : () ),
+            'change '  . $self->format_name,
+            'planner ' . $self->format_planner,
+            'date '    . $self->timestamp->as_string,
         );
     }
 );
@@ -115,6 +113,27 @@ has id => (
             'change ' . length($content) . "\0" . $content
         )->hexdigest;
     }
+);
+
+has timestamp => (
+    is       => 'ro',
+    isa      => 'App::Sqitch::DateTime',
+    required => 1,
+    default  => sub { App::Sqitch::DateTime->now },
+);
+
+has planner_name => (
+    is       => 'ro',
+    isa      => 'Str',
+    required => 1,
+    default  => sub { shift->sqitch->user_name },
+);
+
+has planner_email => (
+    is       => 'ro',
+    isa      => 'UserEmail',
+    required => 1,
+    default  => sub { shift->sqitch->user_email },
 );
 
 sub deploy_file {
@@ -149,6 +168,32 @@ sub format_name_with_tags {
     return join ' ', $self->format_name, map { $_->format_name } $self->tags;
 }
 
+sub format_dependencies {
+    my $self = shift;
+    my $deps = join(
+        ' ',
+        ( map { ":$_" } $self->requires  ),
+        ( map { "!$_" } $self->conflicts ),
+    ) or return '';
+    return "[$deps]";
+}
+
+sub format_name_with_dependencies {
+    my $self = shift;
+    my $dep = $self->format_dependencies or return $self->format_name;
+    return $self->format_name . $self->pspace . $dep;
+}
+
+sub format_op_name_dependencies {
+    my $self = shift;
+    return $self->format_operator . $self->format_name_with_dependencies;
+}
+
+sub format_planner {
+    my $self = shift;
+    return join ' ', $self->planner_name, '<' . $self->planner_email . '>';
+}
+
 sub deploy_handle {
     my $self = shift;
     $self->plan->open_script($self->deploy_file);
@@ -168,8 +213,9 @@ sub format_content {
     my $self = shift;
     return $self->SUPER::format_content . $self->pspace . join (
         ' ',
-        ( map { ":$_" } $self->requires  ),
-        ( map { "!$_" } $self->conflicts ),
+        ($self->format_dependencies || ()),
+        $self->timestamp->as_string,
+        $self->format_planner
     );
 }
 
@@ -183,6 +229,25 @@ sub conflicts_changes {
     my $self = shift;
     my $plan = $self->plan;
     return map { $plan->find($_) } $self->conflicts;
+}
+
+sub note_prompt {
+    my ( $self, %p ) = @_;
+
+    return join(
+        '',
+        __x(
+            "Please enter a note for your change. Lines starting with '#' will\n" .
+            "be ignored, and an empty message aborts the {command}.",
+            command => $p{for},
+        ),
+        $/,
+        __x('Change to {command}:', command => $p{for}),
+        $/, $/,
+        '  ', $self->format_op_name_dependencies,
+        join "$/    ", '', @{ $p{scripts} },
+        $/,
+    );
 }
 
 __PACKAGE__->meta->make_immutable;
@@ -203,10 +268,10 @@ App::Sqitch::Plan::Change - Sqitch deployment plan tag
 
 =head1 Description
 
-A App::Sqitch::Plan::Change represents deployment change as parsed from a plan
-file. In addition to the interface inherited from L<App::Sqitch::Plan::Line>,
-it offers interfaces for parsing dependencies from the deploy script, as well
-as for opening the deploy, revert, and test scripts.
+A App::Sqitch::Plan::Change represents a change as parsed from a plan file. In
+addition to the interface inherited from L<App::Sqitch::Plan::Line>, it offers
+interfaces for parsing dependencies from the deploy script, as well as for
+opening the deploy, revert, and test scripts.
 
 =head1 Interface
 
@@ -218,6 +283,39 @@ See L<App::Sqitch::Plan::Line> for the basics.
 
 An L<App::Sqitch::Plan::Tag> object representing the last tag to appear in the
 plan B<before> the change. May be C<undef>.
+
+=head3 C<pspace>
+
+Blank space separating the change name from the dependencies, timestamp, and
+planner in the file.
+
+=head3 C<suffix>
+
+Suffix to append to file names, if any. Used for reworked changes.
+
+=head3 C<info>
+
+Information about the change, returned as a string. Includes the change ID,
+the name and email address of the user who added the change to the plan, and
+the timestamp for when the change was added to the plan.
+
+=head3 C<id>
+
+A SHA1 hash of the data returned by C<info()>, which can be used as a
+globally-unique identifier for the change.
+
+=head3 C<timestamp>
+
+Returns the an L<App::Sqitch::DateTime> object representing the time at which
+the change was added to the plan.
+
+=head3 C<planner_name>
+
+Returns the name of the user who added the change to the plan.
+
+=head3 C<planner_email>
+
+Returns the email address of the user who added the change to the plan.
 
 =head2 Instance Methods
 
@@ -285,6 +383,34 @@ reverted.
 Returns a string formatted with the change name followed by the list of tags, if
 any, associated with the change. Used to display a change as it is deployed.
 
+=head3 C<format_dependencies>
+
+  my $dependencies = $change->format_dependencies;
+
+Returns a string containing a bracketed list of dependencies. If there are no
+dependencies, an empty string will be returned.
+
+=head3 C<format_name_with_dependencies>
+
+  my $name_with_dependencies = $change->format_name_with_dependencies;
+
+Returns a string formatted with the change name followed by a bracketed list
+of dependencies, if any, associated with the change. Used to display a change
+when added to a plan.
+
+=head3 C<format_op_name_dependencies>
+
+  my $op_name_dependencies = $change->format_op_name_dependencies;
+
+Like C<format_name_with_dependencies>, but includes the operator, if present.
+
+=head3 C<format_planner>
+
+  my $planner = $change->format_planner;
+
+Returns a string formatted with the name and email address of the user who
+added the change to the plan.
+
 =head3 C<deploy_handle>
 
   my $fh = $change->deploy_handle;
@@ -305,6 +431,18 @@ for the change.
 
 Returns an L<IO::File> file handle, opened for reading, for the test script
 for the change.
+
+=head3 C<note_prompt>
+
+  my $prompt = $change->note_prompt(
+      for     => 'rework',
+      scripts => [$change->deploy_file, $change->revert_file],
+  );
+
+Overrides the implementation from C<App::Sqitch::Plan::Line> to add the
+C<files> parameter. This is a list of the files to be created for the command.
+These will usually be the deploy, revert, and test files, but the caller might
+not be creating all of them, so it needs to pass the list.
 
 =head1 See Also
 

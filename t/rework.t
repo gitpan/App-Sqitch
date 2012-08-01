@@ -3,13 +3,12 @@
 use strict;
 use warnings;
 use utf8;
-use Test::More tests => 76;
+use Test::More tests => 80;
 #use Test::More 'no_plan';
 use App::Sqitch;
 use Locale::TextDomain qw(App-Sqitch);
 use Test::NoWarnings;
 use Test::Exception;
-use URI;
 use App::Sqitch::Command::add;
 use Path::Class;
 use Test::File qw(file_not_exists_ok file_exists_ok);
@@ -21,7 +20,6 @@ use MockOutput;
 my $CLASS = 'App::Sqitch::Command::rework';
 
 ok my $sqitch = App::Sqitch->new(
-    uri     => URI->new('https://github.com/theory/sqitch/'),
     top_dir => Path::Class::Dir->new('sql'),
 ), 'Load a sqitch sqitch object';
 my $config = $sqitch->config;
@@ -34,12 +32,14 @@ isa_ok my $rework = App::Sqitch::Command->load({
 can_ok $CLASS, qw(
     requires
     conflicts
+    note
     execute
 );
 
 is_deeply [$CLASS->options], [qw(
     requires|r=s@
     conflicts|c=s@
+    note|n=s@
 )], 'Options should be set up';
 
 ##############################################################################
@@ -50,20 +50,28 @@ is_deeply $CLASS->configure($config, {}), {},
 is_deeply $CLASS->configure($config, {
     requires  => [qw(foo bar)],
     conflicts => ['baz'],
+    note      => [qw(hi there)],
 }), {
     requires  => [qw(foo bar)],
     conflicts => ['baz'],
-}, 'Should have get requires and conflicts options';
+    note      => [qw(hi there)],
+}, 'Should have get requires, conflicts, and note options';
 
 ##############################################################################
 # Test attributes.
 is_deeply $rework->requires, [], 'Requires should be an arrayref';
 is_deeply $rework->conflicts, [], 'Conflicts should be an arrayref';
+is_deeply $rework->note, [], 'Note should be an arrayref';
 
 ##############################################################################
 # Test execute().
 make_path 'sql';
 END { remove_tree 'sql' };
+my $plan_file = $sqitch->plan_file;
+my $fh = $plan_file->open('>') or die "Cannot open $plan_file: $!";
+say $fh '%project=empty';
+$fh->close or die "Error closing $plan_file: $!";
+
 my $plan = $sqitch->plan;
 
 throws_ok { $rework->execute('foo') } 'App::Sqitch::X',
@@ -79,6 +87,13 @@ is $@->message, __x(
 my $deploy_file = file qw(sql deploy foo.sql);
 my $revert_file = file qw(sql revert foo.sql);
 my $test_file   = file qw(sql test   foo.sql);
+
+my $change_mocker = Test::MockModule->new('App::Sqitch::Plan::Change');
+my %request_params;
+$change_mocker->mock(request_note => sub {
+    shift;
+    %request_params = @_;
+});
 
 ok my $add = App::Sqitch::Command::add->new(
     sqitch => $sqitch,
@@ -99,7 +114,7 @@ is $@->message, __x(
 ), 'Fail message should say a tag is needed';
 
 # Tag it, and *then* it should work.
-ok $plan->add_tag('@alpha'), 'Tag it';
+ok $plan->tag( name => '@alpha' ), 'Tag it';
 
 my $deploy_file2 = file qw(sql deploy foo@alpha.sql);
 my $revert_file2 = file qw(sql revert foo@alpha.sql);
@@ -125,6 +140,12 @@ BEGIN;
 COMMIT;
 EOF
 
+# The note should have been required.
+is_deeply \%request_params, {
+    for => __ 'rework',
+    scripts => [$deploy_file, $revert_file, $test_file],
+}, 'It should have prompted for a note';
+
 # The plan file should have been updated.
 ok $plan->load, 'Reload the plan file';
 ok my @steps = $plan->changes, 'Get the steps';
@@ -137,7 +158,7 @@ is_deeply [$steps[1]->requires], ['foo@alpha'],
 is_deeply +MockOutput->get_info, [
     [__x(
         'Added "{change}" to {file}.',
-        change => 'foo :foo@alpha',
+        change => 'foo [:foo@alpha]',
         file   => $sqitch->plan_file,
     )],
     [__n(
@@ -187,7 +208,7 @@ file_not_exists_ok($_) for ($deploy_file, $revert_file, $test_file);
 $add->execute('bar');
 file_exists_ok($deploy_file);
 file_not_exists_ok($_) for ($revert_file, $test_file);
-ok $plan->add_tag('@beta'), 'Tag it with @beta';
+ok $plan->tag( name => '@beta' ), 'Tag it with @beta';
 
 my $deploy_file3 = file qw(sql deploy bar@beta.sql);
 my $revert_file3 = file qw(sql revert bar@beta.sql);
@@ -199,6 +220,7 @@ isa_ok $rework = App::Sqitch::Command::rework->new(
     command   => 'rework',
     config    => $config,
     requires  => ['foo'],
+    note      => [qw(hi there)],
     conflicts => ['dr_evil'],
 ), $CLASS, 'rework command with requirements and conflicts';
 
@@ -209,6 +231,12 @@ file_exists_ok($deploy_file);
 file_not_exists_ok($_) for ($revert_file, $test_file);
 file_exists_ok($deploy_file3);
 file_not_exists_ok($_) for ($revert_file3, $test_file3);
+
+# The note should have been required.
+is_deeply \%request_params, {
+    for => __ 'rework',
+    scripts => [$deploy_file],
+}, 'It should have prompted for a note';
 
 # The plan file should have been updated.
 ok $plan->load, 'Reload the plan file again';
@@ -222,11 +250,13 @@ is_deeply [$steps[3]->requires], ['bar@beta', 'foo'],
     'Requires should have been passed to reworked change';
 is_deeply [$steps[3]->conflicts], ['dr_evil'],
     'Conflicts should have been passed to reworked change';
+is $steps[3]->note, "hi\n\nthere",
+    'Note should have been passed as comment';
 
 is_deeply +MockOutput->get_info, [
     [__x(
         'Added "{change}" to {file}.',
-        change => 'bar :bar@beta :foo !dr_evil',
+        change => 'bar [:bar@beta :foo !dr_evil]',
         file   => $sqitch->plan_file,
     )],
     [__n(

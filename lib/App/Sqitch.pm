@@ -8,12 +8,10 @@ use Getopt::Long;
 use Hash::Merge qw(merge);
 use Path::Class;
 use Config;
-use App::Sqitch::Config;
-use App::Sqitch::Command;
-use App::Sqitch::Plan;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use Moose;
+use Encode qw(encode_utf8);
 use Try::Tiny;
 use List::Util qw(first);
 use IPC::System::Simple qw(runx capturex $EXITVAL);
@@ -21,7 +19,26 @@ use Moose::Util::TypeConstraints;
 use MooseX::Types::Path::Class;
 use namespace::autoclean;
 
-our $VERSION = '0.71';
+our $VERSION = '0.80';
+
+BEGIN {
+    # Need to create types before loading other Sqitch classes.
+    subtype 'UserName', as 'Str', where {
+        hurl user => __ 'User name may not contain "<" or start with "["'
+            if /^[[]/ || /</;
+        1;
+    };
+
+    subtype 'UserEmail', as 'Str', where {
+        hurl user => __ 'User email may not contain ">"' if />/;
+        1;
+    };
+}
+
+# Okay to loas Sqitch classes now that typess are created.
+use App::Sqitch::Config;
+use App::Sqitch::Command;
+use App::Sqitch::Plan;
 
 has plan_file => (
     is       => 'ro',
@@ -63,11 +80,11 @@ has engine => (
 );
 
 # Attributes useful to engines; no defaults.
-has client   => ( is => 'ro', isa => 'Str' );
-has db_name  => ( is => 'ro', isa => 'Str' );
-has username => ( is => 'ro', isa => 'Str' );
-has host     => ( is => 'ro', isa => 'Str' );
-has port     => ( is => 'ro', isa => 'Int' );
+has db_client   => ( is => 'ro', isa => 'Str' );
+has db_name     => ( is => 'ro', isa => 'Str' );
+has db_username => ( is => 'ro', isa => 'Str' );
+has db_host     => ( is => 'ro', isa => 'Str' );
+has db_port     => ( is => 'ro', isa => 'Int' );
 
 has top_dir => (
     is       => 'ro',
@@ -137,6 +154,30 @@ has verbosity => (
     }
 );
 
+has user_name => (
+    is      => 'ro',
+    lazy    => 1,
+    isa     => 'UserName',
+    default => sub {
+        shift->config->get( key => 'user.name' ) || do {
+            require User::pwent;
+            (User::pwent::getpwnam(getlogin)->gecos)[0];
+        };
+    }
+);
+
+has user_email => (
+    is      => 'ro',
+    lazy    => 1,
+    isa     => 'UserEmail',
+    default => sub {
+        shift->config->get( key => 'user.email' ) || do {
+            require Sys::Hostname;
+            getlogin . '@' . Sys::Hostname::hostname();
+        };
+    }
+);
+
 has config => (
     is      => 'ro',
     isa     => 'App::Sqitch::Config',
@@ -155,22 +196,6 @@ has editor => (
           || $ENV{EDITOR}
           || shift->config->get( key => 'core.editor' )
           || ( $^O eq 'MSWin32' ? 'notepad.exe' : 'vi' );
-    }
-);
-
-has uri => (
-    is       => 'ro',
-    isa      => 'URI',
-    required => 1,
-    lazy     => 1,
-    default  => sub {
-        my $uri = shift->config->get( key => 'core.uri' ) or hurl core => __x(
-            'Missing project URI. Run {command} to add a URI',
-            command => '`sqitch config core.uri URI`'
-        );
-
-        require URI;
-        return URI->new($uri);
     }
 );
 
@@ -244,12 +269,11 @@ sub _core_opts {
     return qw(
         plan-file=s
         engine=s
-        client=s
+        db-client=s
         db-name|d=s
-        username|user|u=s
-        host=s
-        port=i
-        uri=s
+        db-username|db-user|u=s
+        db-host=s
+        db-port=i
         top-dir|dir=s
         deploy-dir=s
         revert-dir=s
@@ -327,11 +351,9 @@ sub _parse_core_opts {
     }
     $opts{plan_file} = file $opts{plan_file} if defined $opts{plan_file};
 
-    # Convert URI to URI.
-    $opts{uri} = do { require URI; URI->new($opts{uri}) } if $opts{uri};
-
     # Normalize the options (remove undefs) and return.
     $opts{verbosity} = delete $opts{verbose};
+    $opts{verbosity} = 0 if delete $opts{quiet};
     delete $opts{$_} for grep { !defined $opts{$_} } keys %opts;
     return \%opts;
 }
@@ -404,7 +426,11 @@ sub _prepend {
 }
 
 sub page {
-    shift->pager->say(@_);
+    my $pager = shift->pager;
+    # If the pager is a glob, we don't have to encode, because -CAS does it.
+    return $pager->say(@_) if ref $pager eq 'GLOB';
+    # If it is an object, we have to encode it. Ugh.
+    $pager->say(encode_utf8 join '', map { $_ // '' } @_);
 }
 
 sub trace {
@@ -490,15 +516,19 @@ Constructs and returns a new Sqitch object. The supported parameters include:
 
 =item C<engine>
 
-=item C<client>
+=item C<db_client>
 
 =item C<db_name>
 
-=item C<username>
+=item C<db_username>
 
-=item C<host>
+=item C<user_name>
 
-=item C<port>
+=item C<user_email>
+
+=item C<db_host>
+
+=item C<db_port>
 
 =item C<top_dir>
 
@@ -522,15 +552,19 @@ Constructs and returns a new Sqitch object. The supported parameters include:
 
 =head3 C<engine>
 
-=head3 C<client>
+=head3 C<db_client>
 
 =head3 C<db_name>
 
-=head3 C<username>
+=head3 C<db_username>
 
-=head3 C<host>
+=head3 C<user_name>
 
-=head3 C<port>
+=head3 C<user_email>
+
+=head3 C<db_host>
+
+=head3 C<db_port>
 
 =head3 C<top_dir>
 
@@ -658,11 +692,17 @@ it.
 
 =over
 
-=item * Eliminate use of C<fail()> and localize messages.
+=item * Add cross-project dependency specification using project name.
+
+=item * Add `projects` table to C<Engine/pg> and populate based on plan.
+
+=item * Add project column and hash keys to C<Engine/pg>.
+
+=item * Allow C<status> and C<log> to work with no plan or config.
+
+=item * Add custom formatting support to C<status>.
 
 =item * Add support for C<^> and other shortcuts when specifying changes.
-
-=item * Add an empty line after a new tag in C<Plan::tag()>.
 
 =back
 

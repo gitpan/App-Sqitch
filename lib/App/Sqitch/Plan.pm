@@ -2,6 +2,7 @@ package App::Sqitch::Plan;
 
 use v5.10.1;
 use utf8;
+use App::Sqitch::DateTime;
 use App::Sqitch::Plan::Tag;
 use App::Sqitch::Plan::Change;
 use App::Sqitch::Plan::Blank;
@@ -13,9 +14,9 @@ use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use namespace::autoclean;
 use Moose;
-use constant SYNTAX_VERSION => '1.0.0-a1';
+use constant SYNTAX_VERSION => '1.0.0-b1';
 
-our $VERSION = '0.71';
+our $VERSION = '0.80';
 
 has sqitch => (
     is       => 'ro',
@@ -33,6 +34,26 @@ has _plan => (
     required   => 1,
 );
 
+has _changes => (
+    is       => 'ro',
+    isa      => 'App::Sqitch::Plan::ChangeList',
+    lazy     => 1,
+    required => 1,
+    default  => sub {
+        App::Sqitch::Plan::ChangeList->new(@{ shift->_plan->{changes} }),
+    },
+);
+
+has _lines => (
+    is       => 'ro',
+    isa      => 'App::Sqitch::Plan::LineList',
+    lazy     => 1,
+    required => 1,
+    default  => sub {
+        App::Sqitch::Plan::LineList->new(@{ shift->_plan->{lines} }),
+    },
+);
+
 has position => (
     is       => 'rw',
     isa      => 'Int',
@@ -40,16 +61,35 @@ has position => (
     default  => -1,
 );
 
+has project => (
+    is       => 'ro',
+    isa      => 'Str',
+    required => 1,
+    lazy     => 1,
+    default  => sub {
+        shift->_plan->{pragmas}{project};
+    }
+);
+
+has uri => (
+    is       => 'ro',
+    isa      => 'Maybe[URI]',
+    required => 0,
+    lazy     => 1,
+    default  => sub {
+        my $uri = shift->_plan->{pragmas}{uri} || return;
+        require URI;
+        URI->new($uri);
+    }
+);
+
 sub load {
     my $self = shift;
     my $file = $self->sqitch->plan_file;
-    # XXX Issue a warning if file does not exist?
-    return {
-        changes => App::Sqitch::Plan::ChangeList->new,
-        lines => App::Sqitch::Plan::LineList->new(
-            $self->_version_line,
-        ),
-    } unless -f $file;
+    hurl plan => __x('Plan file {file} does not exist', file => $file)
+        unless -e $file;
+    hurl plan => __x('Plan file {file} is not a regular file', file => $file)
+        unless -f $file;
     my $fh = $file->open('<:encoding(UTF-8)') or hurl plan => __x(
         'Cannot open {file}: {error}',
         file  => $file,
@@ -62,27 +102,59 @@ sub _parse {
     my ( $self, $file, $fh ) = @_;
 
     my @lines;         # List of lines.
-    my @changes;         # List of changes.
-    my @curr_changes;    # List of changes since last tag.
+    my @changes;       # List of changes.
+    my @curr_changes;  # List of changes since last tag.
     my %line_no_for;   # Maps tags and changes to line numbers.
-    my %change_named;    # Maps change names to change objects.
-    my %tag_changes;     # Maps changes in current tag section to line numbers.
+    my %change_named;  # Maps change names to change objects.
+    my %tag_changes;   # Maps changes in current tag section to line numbers.
+    my %pragmas;       # Maps pragma names to values.
     my $seen_version;  # Have we seen a version pragma?
     my $prev_tag;      # Last seen tag.
-    my $prev_change;     # Last seen change.
+    my $prev_change;   # Last seen change.
+
+    # Regex to match names.
+    my $name_re = qr/
+         [^[:punct:]]               #  not punct
+         (?:                        #  followed by...
+             [^[:blank:]@]*         #      any number non-blank, non-@
+             [^[:punct:][:blank:]]  #      one not blank or punct
+         )?                         #  ... optionally
+    /x;
+
+    # Regex to match timestamps.
+    my $ts_re = qr/
+        (?<yr>[[:digit:]]{4})  # year
+        -                      # dash
+        (?<mo>[[:digit:]]{2})  # month
+        -                      # dash
+        (?<dy>[[:digit:]]{2})  # day
+        T                      # T
+        (?<hr>[[:digit:]]{2})  # hour
+        :                      # colon
+        (?<mi>[[:digit:]]{2})  # minute
+        :                      # colon
+        (?<sc>[[:digit:]]{2})  # second
+        Z                      # Zulu time
+    /x;
+
+    my $planner_re = qr/
+        (?<planner_name>[^<]+)    # name
+        [[:blank:]]+              # blanks
+        <(?<planner_email>[^>]+)> # email
+    /x;
 
     LINE: while ( my $line = $fh->getline ) {
         chomp $line;
 
         # Grab blank lines first.
-        if ($line =~ /\A(?<lspace>[[:blank:]]*)(?:#(?<comment>.+)|$)/) {
+        if ($line =~ /\A(?<lspace>[[:blank:]]*)(?:#[[:blank:]]*(?<note>.+)|$)/) {
             my $line = App::Sqitch::Plan::Blank->new( plan => $self, %+ );
             push @lines => $line;
             next LINE;
         }
 
-        # Grab inline comment.
-        $line =~ s/(?<rspace>[[:blank:]]*)(?:[#](?<comment>.*))?$//;
+        # Grab inline note.
+        $line =~ s/(?<rspace>[[:blank:]]*)(?:[#][[:blank:]]*(?<note>.*))?$//;
         my %params = %+;
 
         # Grab pragmas.
@@ -110,27 +182,24 @@ sub _parse {
                 # Set explicit version in case we write it out later. In
                 # future releases, may change parsers depending on the
                 # version.
-                $params{value} = SYNTAX_VERSION;
-                $seen_version = 1;
+                $pragmas{syntax_version} = $params{value} = SYNTAX_VERSION;
+            } else {
+                $pragmas{ $+{name} } = $+{value} // 1;
             }
-            my $prag = App::Sqitch::Plan::Pragma->new( plan => $self, %+, %params );
-            push @lines => $prag;
+            push @lines => App::Sqitch::Plan::Pragma->new(
+                plan => $self,
+                %+,
+                %params
+            );
             next LINE;
         }
 
         # Is it a tag or a change?
         my $type = $line =~ /^[[:blank:]]*[@]/ ? 'tag' : 'change';
-        my $name_re = qr/
-             [^[:punct:]]               #     not punct
-             (?:                        #     followed by...
-                 [^[:blank:]@]*         #         any number non-blank, non-@
-                 [^[:punct:][:blank:]]  #         one not blank or punct
-             )?                         #     ... optionally
-        /x;
-
         $line =~ /
            ^                                    # Beginning of line
            (?<lspace>[[:blank:]]*)?             # Optional leading space
+
            (?:                                  # followed by...
                [@]                              #     @ for tag
            |                                    # ...or...
@@ -138,10 +207,22 @@ sub _parse {
                (?<operator>[+-])                #     Required + or -
                (?<ropspace>[[:blank:]]*)        #     Optional blanks
            )?                                   # ... optionally
+
            (?<name>$name_re)                    # followed by name
+           (?<pspace>[[:blank:]]+)?             #     blanks
+
            (?:                                  # followed by...
-               (?<pspace>[[:blank:]]+)          #     Blanks
-               (?<dependencies>.+)              # Other stuff
+               [[](?<dependencies>[^]]+)[]]     #     dependencies
+               [[:blank:]]*                     #    blanks
+           )?                                   # ... optionally
+
+           (?:                                  # followed by...
+               $ts_re                           #    timestamp
+               [[:blank:]]*                     #    blanks
+           )?                                   # ... optionally
+
+           (?:                                  # followed by
+               $planner_re                      #    planner
            )?                                   # ... optionally
            $                                    # end of line
         /x;
@@ -151,23 +232,32 @@ sub _parse {
         # Make sure we have a valid name.
         my $raise_syntax_error = sub {
             hurl plan => __x(
-                'Syntax error in {file} at line {line}: {error}',
-                file => $file,
-                line => $fh->input_line_number,
-                error => shift
+                'Syntax error in {file} at line {lineno}: {error}',
+                file   => $file,
+                lineno => $fh->input_line_number,
+                error  => shift
             );
         };
 
-        $raise_syntax_error->(__x(
-            'Invalid name "{name}"; names must not begin or end in '
+        # Raise errors for missing data.
+        $raise_syntax_error->(__(
+            'Invalid name; names must not begin or end in '
             . 'punctuation or end in digits following punctuation',
-            name => $line,
-        )) if !$params{name} || $params{name} =~ /[[:punct:]][[:digit:]]*\z/;
+        )) if !$params{name}
+            || $params{name} =~ /[[:punct:]][[:digit:]]*\z/
+            || (!$params{yr} && $line =~ $ts_re);
+
+        $raise_syntax_error->(__ 'Missing timestamp and planner name and email')
+            unless $params{yr} || $params{planner_name};
+        $raise_syntax_error->(__ 'Missing timestamp') unless $params{yr};
+
+        $raise_syntax_error->(__ 'Missing planner name and email')
+            unless $params{planner_name};
 
         # It must not be a reserved name.
         $raise_syntax_error->(__x(
             '"{name}" is a reserved name',
-            name => $line,
+            name => ($type eq 'tag' ? '@' : '') . $params{name},
         )) if $params{name} eq 'HEAD' || $params{name} eq 'ROOT';
 
         # It must not look like a SHA1 hash.
@@ -175,6 +265,17 @@ sub _parse {
             '"{name}" is invalid because it could be confused with a SHA1 ID',
             name => $params{name},
         )) if $params{name} =~ /^[0-9a-f]{40}/;
+
+        # Assemble the timestamp.
+        $params{timestamp} = App::Sqitch::DateTime->new(
+            year      => delete $params{yr},
+            month     => delete $params{mo},
+            day       => delete $params{dy},
+            hour      => delete $params{hr},
+            minute    => delete $params{mi},
+            second    => delete $params{sc},
+            time_zone => 'UTC',
+        );
 
         if ($type eq 'tag') {
             # Fail if no changes.
@@ -267,11 +368,21 @@ sub _parse {
     push @changes => $self->sort_changes(\%line_no_for, @curr_changes) if @curr_changes;
 
     # We should have a version pragma.
-    unshift @lines => $self->_version_line unless $seen_version;
+    unless ( $pragmas{syntax_version} ) {
+        unshift @lines => $self->_version_line;
+        $pragmas{syntax_version} = SYNTAX_VERSION;
+    }
+
+    # Should have project pragma.
+    hurl plan => __x(
+        'Missing %project pragma in {file}',
+        file => $file,
+    ) unless $pragmas{project};
 
     return {
-        changes => App::Sqitch::Plan::ChangeList->new(@changes),
-        lines => App::Sqitch::Plan::LineList->new(@lines),
+        changes => \@changes,
+        lines   => \@lines,
+        pragmas => \%pragmas,
     };
 }
 
@@ -365,16 +476,17 @@ sub open_script {
     );
 }
 
-sub lines          { shift->_plan->{lines}->items }
-sub changes        { shift->_plan->{changes}->changes }
-sub tags           { shift->_plan->{changes}->tags }
-sub count          { shift->_plan->{changes}->count }
-sub index_of       { shift->_plan->{changes}->index_of(shift) }
-sub get            { shift->_plan->{changes}->get(shift) }
-sub find           { shift->_plan->{changes}->find(shift) }
-sub first_index_of { shift->_plan->{changes}->first_index_of(@_) }
-sub change_at      { shift->_plan->{changes}->change_at(shift) }
-sub last_tagged_change { shift->_plan->{changes}->last_tagged_change }
+sub syntax_version { shift->_plan->{pragmas}{syntax_version} };
+sub lines          { shift->_lines->items }
+sub changes        { shift->_changes->changes }
+sub tags           { shift->_changes->tags }
+sub count          { shift->_changes->count }
+sub index_of       { shift->_changes->index_of(shift) }
+sub get            { shift->_changes->get(shift) }
+sub find           { shift->_changes->find(shift) }
+sub first_index_of { shift->_changes->first_index_of(@_) }
+sub change_at      { shift->_changes->change_at(shift) }
+sub last_tagged_change { shift->_changes->last_tagged_change }
 
 sub seek {
     my ( $self, $key ) = @_;
@@ -407,16 +519,16 @@ sub current {
     my $self = shift;
     my $pos = $self->position;
     return if $pos < 0;
-    $self->_plan->{changes}->change_at( $pos );
+    $self->_changes->change_at( $pos );
 }
 
 sub peek {
     my $self = shift;
-    $self->_plan->{changes}->change_at( $self->position + 1 );
+    $self->_changes->change_at( $self->position + 1 );
 }
 
 sub last {
-    shift->_plan->{changes}->change_at( -1 );
+    shift->_changes->change_at( -1 );
 }
 
 sub do {
@@ -426,13 +538,12 @@ sub do {
     }
 }
 
-sub add_tag {
-    my ( $self, $name ) = @_;
-    $name =~ s/^@//;
+sub tag {
+    my ( $self, %p ) = @_;
+    ( my $name = $p{name} ) =~ s/^@//;
     $self->_is_valid(tag => $name);
 
-    my $plan  = $self->_plan;
-    my $changes = $plan->{changes};
+    my $changes = $self->_changes;
     my $key   = "\@$name";
 
     hurl plan => __x(
@@ -446,102 +557,90 @@ sub add_tag {
     );
 
     my $tag = App::Sqitch::Plan::Tag->new(
-        plan => $self,
-        name => $name,
+        %p,
+        plan   => $self,
+        name   => $name,
         change => $change,
+        rspace => $p{note} ? ' ' : '',
     );
 
     $change->add_tag($tag);
     $changes->index_tag( $changes->index_of( $change->id ), $tag );
-    $plan->{lines}->append( $tag );
+    $self->_lines->append( $tag );
     return $tag;
 }
 
 sub add {
-    my ( $self, $name, $requires, $conflicts ) = @_;
-    $self->_is_valid(change => $name);
+    my ( $self, %p ) = @_;
+    $self->_is_valid(change => $p{name});
+    my $changes = $self->_changes;
 
-    my $plan  = $self->_plan;
-    my $changes = $plan->{changes};
-
-    if (defined( my $idx = $changes->index_of($name . '@HEAD') )) {
+    if ( defined( my $idx = $changes->index_of( $p{name} . '@HEAD' ) ) ) {
         my $tag_idx = $changes->index_of_last_tagged;
         hurl plan => __x(
             qq{Change "{change}" already exists.\n}
             . 'Use "sqitch rework" to copy and rework it',
-            change => $name,
+            change => $p{name},
         );
     }
 
-    my $change = App::Sqitch::Plan::Change->new(
-        plan      => $self,
-        name      => $name,
-        requires  => $requires  ||= [],
-        conflicts => $conflicts ||= [],
-        (@{ $requires } || @{ $conflicts } ? ( pspace => ' ' ) : ()),
-    );
+    $p{rspace} //= ' ' if $p{note};
+    my $change = App::Sqitch::Plan::Change->new( %p, plan => $self );
 
     # Make sure dependencies are valid.
-    $self->_check_dependencies($change, 'add');
+    $self->_check_dependencies( $change, 'add' );
 
     # We good. Append a blank line if the previous change has a tag.
-    if ($changes->count) {
-        my $prev = $changes->change_at( $changes->count - 1);
-        if ($prev->tags) {
-            $plan->{lines}->append(App::Sqitch::Plan::Blank->new(
-                plan => $self,
-            ));
+    if ( $changes->count ) {
+        my $prev = $changes->change_at( $changes->count - 1 );
+        if ( $prev->tags ) {
+            $self->_lines->append(
+                App::Sqitch::Plan::Blank->new( plan => $self )
+            );
         }
     }
 
     # Append the change and return.
     $changes->append( $change );
-    $plan->{lines}->append( $change );
+    $self->_lines->append( $change );
     return $change;
 }
 
 sub rework {
-    my ( $self, $name, $requires, $conflicts ) = @_;
-    my $plan  = $self->_plan;
-    my $changes = $plan->{changes};
-    my $idx   = $changes->index_of($name . '@HEAD') // hurl plan => __x(
+    my ( $self, %p ) = @_;
+    my $changes = $self->_changes;
+    my $idx   = $changes->index_of( $p{name} . '@HEAD') // hurl plan => __x(
         qq{Change "{change}" does not exist.\n}
         . 'Use "sqitch add {change}" to add it to the plan',
-        change => $name,
+        change => $p{name},
     );
 
     my $tag_idx = $changes->index_of_last_tagged;
     hurl plan => __x(
         qq{Cannot rework "{change}" without an intervening tag.\n}
         . 'Use "sqitch tag" to create a tag and try again',
-        change => $name,
+        change => $p{name},
     ) if !defined $tag_idx || $tag_idx < $idx;
 
     my ($tag) = $changes->change_at($tag_idx)->tags;
-    unshift @{ $requires ||= [] } => $name . $tag->format_name;
+    unshift @{ $p{requires} ||= [] } => $p{name} . $tag->format_name;
 
     my $orig = $changes->change_at($idx);
-    my $new  = App::Sqitch::Plan::Change->new(
-        plan      => $self,
-        name      => $name,
-        requires  => $requires,
-        conflicts => $conflicts ||= [],
-        (@{ $requires } || @{ $conflicts } ? ( pspace => ' ' ) : ()),
-    );
+    my $new  = App::Sqitch::Plan::Change->new( %p, plan => $self );
 
     # Make sure dependencies are valid.
-    $self->_check_dependencies($new, 'rework');
+    $self->_check_dependencies( $new, 'rework' );
 
     # We good.
-    $orig->suffix($tag->format_name);
+    $orig->suffix( $tag->format_name );
     $changes->append( $new );
-    $plan->{lines}->append( $new );
+    $self->_lines->append( $new );
     return $new;
 }
 
 sub _check_dependencies {
     my ( $self, $change, $action ) = @_;
-    my $changes = $self->_plan->{changes};
+    my $changes = $self->_changes;
     for my $req ( $change->requires ) {
         next if defined $changes->index_of($req =~ /@/ ? $req : $req . '@HEAD');
         my $name = $change->name;
@@ -668,6 +767,26 @@ Returns the current position of the iterator. This is an integer that's used
 as an index into plan. If C<next()> has not been called, or if C<reset()> has
 been called, the value will be -1, meaning it is outside of the plan. When
 C<next> returns C<undef>, the value will be the last index in the plan plus 1.
+
+=head3 C<project>
+
+  my $project = $plan->project;
+
+Returns the name of the project as set via the C<%project> pragma in the plan
+file.
+
+=head3 C<uri>
+
+  my $uri = $plan->uri;
+
+Returns the URI for the project as set via the C<%uri> pragma, which is
+optional. If it is not present, C<undef> will be returned.
+
+=head3 C<syntax_version>
+
+  my $syntax_version = $plan->syntax_version;
+
+Returns the plan syntax version, which is always the latest version.
 
 =head2 Instance Methods
 
@@ -860,7 +979,7 @@ iterate over every change.
 
   $plan->write_to($file);
 
-Write the plan to the named file, including. comments and white space from the
+Write the plan to the named file, including notes and white space from the
 original plan file.
 
 =head3 C<open_script>
@@ -888,21 +1007,25 @@ argument is a hash reference, its keys should be previously-seen change and tag
 names that can be assumed to be satisfied requirements for the succeeding
 changes.
 
-=head3 C<add_tag>
+=head3 C<tag>
 
-  $plan->add_tag('whee');
+  $plan->tag('whee');
 
-Adds a tag to the plan. Exits with a fatal error if the tag already
-exists in the plan.
+Tags the most recent change in the plan. Exits with a fatal error if the tag
+already exists in the plan.
 
 =head3 C<add>
 
-  $plan->add( 'whatevs' );
-  $plan->add( 'widgets', [qw(foo bar)], [qw(dr_evil)] );
+  $plan->add( name => 'whatevs' );
+  $plan->add(
+      name      => 'widgets',
+      requires  => [qw(foo bar)],
+      conflicts => [qw(dr_evil)],
+  );
 
-Adds a change to the plan. The second argument specifies a list of required
-changes. The third argument specifies a list of conflicting changes. Exits with a
-fatal error if the change already exists, or if the any of the dependencies are
+Adds a change to the plan. The supported parameters are the same as those
+passed to the L<App::Sqitch::Plan::Change> constructor. Exits with a fatal
+error if the change already exists, or if the any of the dependencies are
 unknown.
 
 =head3 C<rework>
@@ -951,7 +1074,7 @@ A named deployment tag, generally corresponding to a release name. Begins with
 a C<@>, followed by one or more non-whitespace characters. The first and last
 characters must not be punctuation characters.
 
-=item * A comment.
+=item * A note.
 
 Begins with a C<#> and goes to the end of the line. Preceding white space is
 ignored. May appear on a line after a pragma, change, or tag.
@@ -1040,13 +1163,13 @@ VCS "delta" tag.
 
 Here is the EBNF Grammar for the plan file:
 
-  plan-file    = { <pragma> | <change-line> | <tag-line> | <comment-line> | <blank-line> }* ;
+  plan-file    = { <pragma> | <change-line> | <tag-line> | <note-line> | <blank-line> }* ;
 
   blank-line   = [ <blanks> ] <eol>;
-  comment-line = <comment> ;
-  change-line    = <name> [ { <requires> | <conflicts} } ] ( <eol> | <comment> ) ;
-  tag-line     = <tag> ( <eol> | <comment> ) ;
-  pragma       = "%" [ <blanks> ] <name> [ <blanks> ] = [ <blanks> ] <value> ( <eol> | <comment> ) ;
+  note-line = <note> ;
+  change-line    = <name> [ { <requires> | <conflicts} } ] ( <eol> | <note> ) ;
+  tag-line     = <tag> ( <eol> | <note> ) ;
+  pragma       = "%" [ <blanks> ] <name> [ <blanks> ] = [ <blanks> ] <value> ( <eol> | <note> ) ;
 
   tag          = "@" <name> ;
   requires     = ":" <name> ;
@@ -1055,7 +1178,7 @@ Here is the EBNF Grammar for the plan file:
   non-punct    = ? non-punctuation, non-blank character ? ;
   value        = ? non-EOL or "#" characters ?
 
-  comment      = [ <blanks> ] "#" [ <string> ] <EOL> ;
+  note      = [ <blanks> ] "#" [ <string> ] <EOL> ;
   eol          = [ <blanks> ] <EOL> ;
 
   blanks       = ? blank characters ? ;
@@ -1064,17 +1187,17 @@ Here is the EBNF Grammar for the plan file:
 And written as regular expressions:
 
   my $eol          = qr/[[:blank:]]*$/
-  my $comment      = qr/(?:[[:blank:]]+)?[#].+$/;
+  my $note      = qr/(?:[[:blank:]]+)?[#].+$/;
   my $name         = qr/[^[:punct:][:blank:]](?:(?:[^[:space:]@]+)?[^[:punct:][:blank:]])?/;
   my $tag          = qr/[@]$name/;
   my $requires     = qr/[:]$name/;
   my conflicts     = qr/[!]$name/;
-  my $tag_line     = qr/^$tag(?:$comment|$eol)/;
-  my $change_line    = qr/^$name(?:$requires|$conflicts)*(?:$comment|$eol)/;
-  my $comment_line = qr/^$comment/;
-  my $pragma    = qr/^][[:blank:]]*[%][[:blank:]]*$name[[:blank:]]*=[[:blank:]].+?(?:$comment|$eol)$/;
+  my $tag_line     = qr/^$tag(?:$note|$eol)/;
+  my $change_line    = qr/^$name(?:$requires|$conflicts)*(?:$note|$eol)/;
+  my $note_line = qr/^$note/;
+  my $pragma    = qr/^][[:blank:]]*[%][[:blank:]]*$name[[:blank:]]*=[[:blank:]].+?(?:$note|$eol)$/;
   my $blank_line   = qr/^$eol/;
-  my $plan         = qr/(?:$pragma|$change_line|$tag_line|$comment_line|$blank_line)+/ms;
+  my $plan         = qr/(?:$pragma|$change_line|$tag_line|$note_line|$blank_line)+/ms;
 
 =head1 See Also
 

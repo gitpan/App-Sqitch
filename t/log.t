@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 use utf8;
-use Test::More tests => 148;
+use Test::More tests => 231;
 #use Test::More 'no_plan';
 use App::Sqitch;
 use Locale::TextDomain qw(App-Sqitch);
@@ -12,16 +12,13 @@ use Test::Exception;
 use Test::MockModule;
 use Path::Class;
 use Term::ANSIColor qw(color);
-use URI;
 use lib 't/lib';
 use MockOutput;
 
 my $CLASS = 'App::Sqitch::Command::log';
 require_ok $CLASS;
 
-my $uri = URI->new('https://github.com/theory/sqitch/');
 ok my $sqitch = App::Sqitch->new(
-    uri     => $uri,
     top_dir => Path::Class::Dir->new('sql'),
     _engine => 'sqlite',
 ), 'Load a sqitch sqitch object';
@@ -189,56 +186,75 @@ $cmock->unmock_all;
 
 ###############################################################################
 # Test named formats.
-my $dt = App::Sqitch::DateTime->now;
+my $cdt = App::Sqitch::DateTime->now;
+my $pdt = $cdt->clone->subtract(days => 1);
 my $event = {
-    event        => 'deploy',
-    change_id    => '000011112222333444',
-    change       => 'lolz',
-    tags         => ['@beta', '@gamma'],
-    committed_by => 'larry',
-    committed_at => $dt,
+    event           => 'deploy',
+    change_id       => '000011112222333444',
+    change          => 'lolz',
+    tags            => [ '@beta', '@gamma' ],
+    committer_name  => 'larry',
+    committer_email => 'larry@example.com',
+    committed_at    => $cdt,
+    planner_name    => 'damian',
+    planner_email   => 'damian@example.com',
+    planned_at      => $pdt,
+    note            => "For the LOLZ.\n\nYou know, funny stuff and cute kittens, right?",
+    requires        => [qw(foo bar)],
+    conflicts       => []
 };
 
-my $iso = $dt->as_string( format => 'iso' );
+my $ciso = $cdt->as_string( format => 'iso' );
+my $craw = $cdt->as_string( format => 'raw' );
+my $piso = $pdt->as_string( format => 'iso' );
+my $praw = $pdt->as_string( format => 'raw' );
 for my $spec (
-    [ raw => "event     deploy\n"
-           . "change    000011112222333444 (\@beta, \@gamma)\n"
-           . "name      lolz\n"
-           . "date      $iso\n"
-           . "committer larry\n"
+    [ raw => "deploy 000011112222333444 (\@beta, \@gamma)\n"
+        . "name      lolz\n"
+        . "requires  foo, bar\n"
+        . "planner   damian <damian\@example.com>\n"
+        . "planned   $praw\n"
+        . "committer larry <larry\@example.com>\n"
+        . "committed $craw\n\n"
+        . "    For the LOLZ.\n    \n    You know, funny stuff and cute kittens, right?\n"
     ],
-    [ full => color('yellow') . __ 'Change:' . '    000011112222333444'
-        . color('reset') . " (\@beta, \@gamma)\n"
-        . __ 'Event:' . "     deploy\n"
+    [ full =>  __ 'Deploy' . " 000011112222333444 (\@beta, \@gamma)\n"
         . __ 'Name:' . "      lolz\n"
-        . __ 'Date:' . "      __DATE__\n"
-        . __ 'By:' . "        larry\n"
+        . __ 'Requires: ' . " foo, bar\n"
+        . __ 'Planner:' . "   damian <damian\@example.com>\n"
+        . __ 'Planned:' . "   __PDATE__\n"
+        . __ 'Committer:' . " larry <larry\@example.com>\n"
+        . __ 'Committed:' . " __CDATE__\n\n"
+        . "    For the LOLZ.\n    \n    You know, funny stuff and cute kittens, right?\n"
     ],
-    [ long => color('yellow') . __ 'Deploy' . ' 000011112222333444'
-        . color('reset') . " (\@beta, \@gamma)\n"
+    [ long =>  __ 'Deploy' . " 000011112222333444 (\@beta, \@gamma)\n"
         . __ 'Name:' . "      lolz\n"
-        . __ 'Date:' . "      __DATE__\n"
-        . __ 'By:' . "        larry\n"
+        . __ 'Planner:' . "   damian <damian\@example.com>\n"
+        . __ 'Committer:' . " larry <larry\@example.com>\n\n"
+        . "    For the LOLZ.\n    \n    You know, funny stuff and cute kittens, right?\n"
     ],
-    [ medium => color('yellow') . __ 'Deploy' . ' 000011112222333444'
-        . color('reset') . " (\@beta, \@gamma)\n"
+    [ medium =>  __ 'Deploy' . " 000011112222333444\n"
         . __ 'Name:' . "      lolz\n"
-        . __ 'Date:' . "      __DATE__\n"
+        . __ 'Committer:' . " larry <larry\@example.com>\n"
+        . __ 'Date:' . "      __CDATE__\n\n"
+        . "    For the LOLZ.\n    \n    You know, funny stuff and cute kittens, right?\n"
     ],
-    [ short => color('yellow') . '000011112222333444' . color('reset') . "\n"
-        . $dt->as_string( format => 'short' ) . ' - '
-        . __ 'deploy' . " lolz - larry\n"
+    [ short =>  __ 'Deploy' . " 000011112222333444\n"
+        . __ 'Name:' . "      lolz\n"
+        . __ 'Committer:' . " larry <larry\@example.com>\n\n"
+        . "    For the LOLZ.\n",
     ],
-    [ oneline => '000011112222333444 deploy lolz' ],
+    [ oneline => '000011112222333444 deploy lolz For the LOLZ.' ],
 ) {
     my $format = $CLASS->configure( $config, { format => $spec->[0] } )->{format};
     ok my $log = $CLASS->new( sqitch => $sqitch, format => $format ),
         qq{Instantiate with format "$spec->[0]"};
-    (my $exp = $spec->[1]) =~ s/__DATE__/$iso/;
+    (my $exp = $spec->[1]) =~ s/__CDATE__/$ciso/;
+    $exp =~ s/__PDATE__/$piso/;
     is $log->formatter->format( $log->format, $event ), $exp,
         qq{Format "$spec->[0]" should output correctly};
 
-    if ($spec->[1] =~ /__DATE__/) {
+    if ($spec->[1] =~ /__CDATE__/) {
         # Test different date formats.
         for my $date_format (qw(rfc long medium)) {
             ok my $log = $CLASS->new(
@@ -246,8 +262,10 @@ for my $spec (
                 format => $format,
                 date_format => $date_format,
             ), qq{Instantiate with format "$spec->[0]" and date format "$date_format"};
-            my $date = $dt->as_string( format => $date_format );
-            (my $exp = $spec->[1]) =~ s/__DATE__/$date/;
+            my $date = $cdt->as_string( format => $date_format );
+            (my $exp = $spec->[1]) =~ s/__CDATE__/$date/;
+            $date = $pdt->as_string( format => $date_format );
+            $exp =~ s/__PDATE__/$date/;
             is $log->formatter->format( $log->format, $event ), $exp,
                 qq{Format "$spec->[0]" and date format "$date_format" should output correctly};
         }
@@ -256,7 +274,8 @@ for my $spec (
     if ($spec->[1] =~ s/\s+[(]?[@]beta,\s+[@]gamma[)]?//) {
         # Test without tags.
         local $event->{tags} = [];
-        (my $exp = $spec->[1]) =~ s/__DATE__/$iso/;
+        (my $exp = $spec->[1]) =~ s/__CDATE__/$ciso/;
+        $exp =~ s/__PDATE__/$piso/;
         is $log->formatter->format( $log->format, $event ), $exp,
             qq{Format "$spec->[0]" should output correctly without tags};
     }
@@ -264,6 +283,11 @@ for my $spec (
 
 ###############################################################################
 # Test all formatting characters.
+my $local_cdt = $cdt->clone;
+$local_cdt->set_time_zone('local');
+my $local_pdt = $pdt->clone;
+$local_pdt->set_time_zone('local');
+
 my $formatter = $log->formatter;
 for my $spec (
     ['%e', { event => 'deploy' }, 'deploy' ],
@@ -281,20 +305,47 @@ for my $spec (
     ['%{event}_',     {}, __ 'Event:    ' ],
     ['%{change}_',    {}, __ 'Change:   ' ],
     ['%{committer}_', {}, __ 'Committer:' ],
+    ['%{planner}_',   {}, __ 'Planner:  ' ],
     ['%{by}_',        {}, __ 'By:       ' ],
     ['%{date}_',      {}, __ 'Date:     ' ],
+    ['%{committed}_', {}, __ 'Committed:' ],
+    ['%{planned}_',   {}, __ 'Planned:  ' ],
     ['%{name}_',      {}, __ 'Name:     ' ],
+    ['%{email}_',     {}, __ 'Email:    ' ],
+    ['%{requires}_',  {}, __ 'Requires: ' ],
+    ['%{conflicts}_', {}, __ 'Conflicts:' ],
 
     ['%H', { change_id => '123456789' }, '123456789' ],
     ['%h', { change_id => '123456789' }, '123456789' ],
     ['%{5}h', { change_id => '123456789' }, '12345' ],
     ['%{7}h', { change_id => '123456789' }, '1234567' ],
 
-    ['%c', { change => 'foo' }, 'foo'],
-    ['%c', { change => 'bar' }, 'bar'],
+    ['%n', { change => 'foo' }, 'foo'],
+    ['%n', { change => 'bar' }, 'bar'],
 
-    ['%a', { committed_by => 'larry'  }, 'larry'],
-    ['%a', { committed_by => 'damian' }, 'damian'],
+    ['%c', { committer_name => 'larry', committer_email => 'larry@example.com'  }, 'larry <larry@example.com>'],
+    ['%{n}c', { committer_name => 'damian' }, 'damian'],
+    ['%{name}c', { committer_name => 'chip' }, 'chip'],
+    ['%{e}c', { committer_email => 'larry@example.com'  }, 'larry@example.com'],
+    ['%{email}c', { committer_email => 'damian@example.com' }, 'damian@example.com'],
+
+    ['%{date}c', { committed_at => $cdt }, $cdt->as_string( format => 'iso' ) ],
+    ['%{date:rfc}c', { committed_at => $cdt }, $cdt->as_string( format => 'rfc' ) ],
+    ['%{d:long}c', { committed_at => $cdt }, $cdt->as_string( format => 'long' ) ],
+    ["%{d:cldr:HH'h' mm'm'}c", { committed_at => $cdt }, $local_cdt->format_cldr( q{HH'h' mm'm'} ) ],
+    ["%{d:strftime:%a at %H:%M:%S}c", { committed_at => $cdt }, $local_cdt->strftime('%a at %H:%M:%S') ],
+
+    ['%p', { planner_name => 'larry', planner_email => 'larry@example.com'  }, 'larry <larry@example.com>'],
+    ['%{n}p', { planner_name => 'damian' }, 'damian'],
+    ['%{name}p', { planner_name => 'chip' }, 'chip'],
+    ['%{e}p', { planner_email => 'larry@example.com'  }, 'larry@example.com'],
+    ['%{email}p', { planner_email => 'damian@example.com' }, 'damian@example.com'],
+
+    ['%{date}p', { planned_at => $pdt }, $pdt->as_string( format => 'iso' ) ],
+    ['%{date:rfc}p', { planned_at => $pdt }, $pdt->as_string( format => 'rfc' ) ],
+    ['%{d:long}p', { planned_at => $pdt }, $pdt->as_string( format => 'long' ) ],
+    ["%{d:cldr:HH'h' mm'm'}p", { planned_at => $pdt }, $local_pdt->format_cldr( q{HH'h' mm'm'} ) ],
+    ["%{d:strftime:%a at %H:%M:%S}p", { planned_at => $pdt }, $local_pdt->strftime('%a at %H:%M:%S') ],
 
     ['%t', { tags => [] }, '' ],
     ['%t', { tags => ['@foo'] }, ' @foo' ],
@@ -310,13 +361,69 @@ for my $spec (
     ['%{|}T', { tags => ['@foo'] }, ' (@foo)' ],
     ['%{|}T', { tags => ['@foo', '@bar'] }, ' (@foo|@bar)' ],
 
-    ['%n', {}, "\n" ],
+    ['%r', { requires => [] }, '' ],
+    ['%r', { requires => ['foo'] }, ' foo' ],
+    ['%r', { requires => ['foo', 'bar'] }, ' foo, bar' ],
+    ['%{|}r', { requires => [] }, '' ],
+    ['%{|}r', { requires => ['foo'] }, ' foo' ],
+    ['%{|}r', { requires => ['foo', 'bar'] }, ' foo|bar' ],
 
-    ['%d', { committed_at => $dt }, $dt->as_string( format => 'iso' ) ],
-    ['%{rfc}d', { committed_at => $dt }, $dt->as_string( format => 'rfc' ) ],
-    ['%{long}d', { committed_at => $dt }, $dt->as_string( format => 'long' ) ],
+    ['%R', { requires => [] }, '' ],
+    ['%R', { requires => ['foo'] }, __('Requires: ') . " foo\n" ],
+    ['%R', { requires => ['foo', 'bar'] }, __('Requires: ') . " foo, bar\n" ],
+    ['%{|}R', { requires => [] }, '' ],
+    ['%{|}R', { requires => ['foo'] }, __('Requires: ') . " foo\n" ],
+    ['%{|}R', { requires => ['foo', 'bar'] }, __('Requires: ') . " foo|bar\n" ],
+
+    ['%x', { conflicts => [] }, '' ],
+    ['%x', { conflicts => ['foo'] }, ' foo' ],
+    ['%x', { conflicts => ['foo', 'bax'] }, ' foo, bax' ],
+    ['%{|}x', { conflicts => [] }, '' ],
+    ['%{|}x', { conflicts => ['foo'] }, ' foo' ],
+    ['%{|}x', { conflicts => ['foo', 'bax'] }, ' foo|bax' ],
+
+    ['%X', { conflicts => [] }, '' ],
+    ['%X', { conflicts => ['foo'] }, __('Conflicts:') . " foo\n" ],
+    ['%X', { conflicts => ['foo', 'bar'] }, __('Conflicts:') . " foo, bar\n" ],
+    ['%{|}X', { conflicts => [] }, '' ],
+    ['%{|}X', { conflicts => ['foo'] }, __('Conflicts:') . " foo\n" ],
+    ['%{|}X', { conflicts => ['foo', 'bar'] }, __('Conflicts:') . " foo|bar\n" ],
 
     ['%{yellow}C', {}, '' ],
+    ['%{:event}C', { event => 'deploy' }, '' ],
+    ['%v', {}, "\n" ],
+    ['%%', {}, '%' ],
+
+    ['%s', { note => 'hi there' }, 'hi there' ],
+    ['%s', { note => "hi there\nyo" }, 'hi there' ],
+    ['%s', { note => "subject line\n\nfirst graph\n\nsecond graph\n\n" }, 'subject line' ],
+    ['%{  }s', { note => 'hi there' }, '  hi there' ],
+    ['%{xx}s', { note => 'hi there' }, 'xxhi there' ],
+
+    ['%b', { note => 'hi there' }, '' ],
+    ['%b', { note => "hi there\nyo" }, 'yo' ],
+    ['%b', { note => "subject line\n\nfirst graph\n\nsecond graph\n\n" }, "first graph\n\nsecond graph\n\n" ],
+    ['%{  }b', { note => 'hi there' }, '' ],
+    ['%{xxx }b', { note => "hi there\nyo" }, "xxx yo" ],
+    ['%{x}b', { note => "subject line\n\nfirst graph\n\nsecond graph\n\n" }, "xfirst graph\nx\nxsecond graph\nx\n" ],
+    ['%{ }b', { note => "hi there\r\nyo" }, " yo" ],
+
+    ['%B', { note => 'hi there' }, 'hi there' ],
+    ['%B', { note => "hi there\nyo" }, "hi there\nyo" ],
+    ['%B', { note => "subject line\n\nfirst graph\n\nsecond graph\n\n" }, "subject line\n\nfirst graph\n\nsecond graph\n\n" ],
+    ['%{  }B', { note => 'hi there' }, '  hi there' ],
+    ['%{xxx }B', { note => "hi there\nyo" }, "xxx hi there\nxxx yo" ],
+    ['%{x}B', { note => "subject line\n\nfirst graph\n\nsecond graph\n\n" }, "xsubject line\nx\nxfirst graph\nx\nxsecond graph\nx\n" ],
+    ['%{ }B', { note => "hi there\r\nyo" }, " hi there\r\n yo" ],
+
+    ['%{change}a',    $event, "change    $event->{change}\n" ],
+    ['%{change_id}a', $event, "change_id $event->{change_id}\n" ],
+    ['%{event}a',     $event, "event     $event->{event}\n" ],
+    ['%{tags}a',      $event, 'tags      ' . join(', ', @{ $event->{tags} }) . "\n" ],
+    ['%{requires}a',  $event, 'requires  ' . join(', ', @{ $event->{requires} }) . "\n" ],
+    ['%{conflicts}a', $event, '' ],
+    ['%{committer_name}a', $event, "committer_name $event->{committer_name}\n" ],
+    ['%{committed_at}a',   $event, "committed_at $craw\n" ],
 ) {
     (my $desc = $spec->[2]) =~ s/\n/[newline]/g;
     is $formatter->format( $spec->[0], $spec->[1] ), $spec->[2],
@@ -338,18 +445,81 @@ is $log->formatter->format( '%H', { change_id => '123456789' } ),
 
 ok $log = $CLASS->new( sqitch => $sqitch, date_format => 'rfc' ),
     'Instantiate with date_format => "rfc"';
-is $log->formatter->format( '%d', { committed_at => $dt } ),
-    $dt->as_string( format => 'rfc' ),
-    '%d should respect the date_format attribute';
-is $log->formatter->format( '%{iso}d', { committed_at => $dt } ),
-    $dt->as_string( format => 'iso' ),
-    '%{iso}d should override the date_format attribute';
+is $log->formatter->format( '%{date}c', { committed_at => $cdt } ),
+    $cdt->as_string( format => 'rfc' ),
+    '%{date}c should respect the date_format attribute';
+is $log->formatter->format( '%{d:iso}c', { committed_at => $cdt } ),
+    $cdt->as_string( format => 'iso' ),
+    '%{iso}c should override the date_format attribute';
+
+throws_ok { $formatter->format( '%{foo}a', {}) } 'App::Sqitch::X',
+    'Should get exception for unknown attribute passed to %a';
+is $@->ident, 'log', '%a error ident should be "log"';
+is $@->message, __x(
+    '{attr} is not a valid change attribute', attr => 'foo'
+), '%a error message should be correct';
+
 
 delete $ENV{ANSI_COLORS_DISABLED};
 for my $color (qw(yellow red blue cyan magenta)) {
     is $formatter->format( "%{$color}C", {} ), color($color),
         qq{Format "%{$color}C" should output }
         . color($color) . $color . color('reset');
+}
+
+for my $spec (
+    [ ':event', { event => 'deploy' }, 'green', 'deploy' ],
+    [ ':event', { event => 'revert' }, 'blue',  'revert' ],
+    [ ':event', { event => 'fail'   }, 'red',   'fail'   ],
+) {
+    is $formatter->format( "%{$spec->[0]}C", $spec->[1] ), color($spec->[2]),
+        qq{Format "%{$spec->[0]}C" on "$spec->[3]" should output }
+        . color($spec->[2]) . $spec->[2] . color('reset');
+}
+
+# Make sure other colors work.
+my $yellow = color('yellow') . '%s' . color('reset');
+my $green  = color('green')  . '%s' . color('reset');
+$event->{conflicts} = [qw(dr_evil)];
+for my $spec (
+    [ full => sprintf($green, __ 'Deploy' . ' 000011112222333444')
+        . " (\@beta, \@gamma)\n"
+        . __ 'Name:' . "      lolz\n"
+        . __ 'Requires: ' . " foo, bar\n"
+        . __ 'Conflicts: ' . "dr_evil\n"
+        . __ 'Planner:' . "   damian <damian\@example.com>\n"
+        . __ 'Planned:' . "   __PDATE__\n"
+        . __ 'Committer:' . " larry <larry\@example.com>\n"
+        . __ 'Committed:' . " __CDATE__\n\n"
+        . "    For the LOLZ.\n    \n    You know, funny stuff and cute kittens, right?\n"
+    ],
+    [ long => sprintf($green, __ 'Deploy' . ' 000011112222333444')
+        . " (\@beta, \@gamma)\n"
+        . __ 'Name:' . "      lolz\n"
+        . __ 'Planner:' . "   damian <damian\@example.com>\n"
+        . __ 'Committer:' . " larry <larry\@example.com>\n\n"
+        . "    For the LOLZ.\n    \n    You know, funny stuff and cute kittens, right?\n"
+    ],
+    [ medium => sprintf($green, __ 'Deploy' . ' 000011112222333444') . "\n"
+        . __ 'Name:' . "      lolz\n"
+        . __ 'Committer:' . " larry <larry\@example.com>\n"
+        . __ 'Date:' . "      __CDATE__\n\n"
+        . "    For the LOLZ.\n    \n    You know, funny stuff and cute kittens, right?\n"
+    ],
+    [ short => sprintf($green, __ 'Deploy' . ' 000011112222333444') . "\n"
+        . __ 'Name:' . "      lolz\n"
+        . __ 'Committer:' . " larry <larry\@example.com>\n\n"
+        . "    For the LOLZ.\n",
+    ],
+    [ oneline => sprintf "$green %s %s", '000011112222333444' . ' ' . __('deploy'), 'lolz', 'For the LOLZ.' ],
+) {
+    my $format = $CLASS->configure( $config, { format => $spec->[0] } )->{format};
+    ok my $log = $CLASS->new( sqitch => $sqitch, format => $format ),
+        qq{Instantiate with format "$spec->[0]" again};
+    (my $exp = $spec->[1]) =~ s/__CDATE__/$ciso/;
+    $exp =~ s/__PDATE__/$piso/;
+    is $log->formatter->format( $log->format, $event ), $exp,
+        qq{Format "$spec->[0]" should output correctly with color};
 }
 
 throws_ok { $formatter->format( '%{BLUELOLZ}C', {} ) } 'App::Sqitch::X',
@@ -416,12 +586,14 @@ is_deeply +MockOutput->get_page, [
 
 # Set attributes and add more events.
 my $event2 = {
-    event        => 'revert',
-    change_id    => '84584584359345',
-    change       => 'barf',
-    tags         => [],
-    committed_by => 'theory',
-    committed_at => $dt,
+    event           => 'revert',
+    change_id       => '84584584359345',
+    change          => 'barf',
+    tags            => [],
+    committer_name  => 'theory',
+    committer_email => 'theory@example.com',
+    committed_at    => $cdt,
+    note            => 'Oh man this was a bad idea',
 };
 push @events => {}, $event, $event2;
 isa_ok $log = $CLASS->new(

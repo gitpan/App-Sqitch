@@ -12,18 +12,25 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.71';
+our $VERSION = '0.80';
 
 has requires => (
     is       => 'ro',
-    isa      => 'ArrayRef',
+    isa      => 'ArrayRef[Str]',
     required => 1,
     default  => sub { [] },
 );
 
 has conflicts => (
     is       => 'ro',
-    isa      => 'ArrayRef',
+    isa      => 'ArrayRef[Str]',
+    required => 1,
+    default  => sub { [] },
+);
+
+has note => (
+    is       => 'ro',
+    isa      => 'ArrayRef[Str]',
     required => 1,
     default  => sub { [] },
 );
@@ -32,6 +39,7 @@ sub options {
     return qw(
         requires|r=s@
         conflicts|c=s@
+        note|n=s@
     );
 }
 
@@ -43,14 +51,25 @@ sub execute {
 
     # Rework it.
     my $reworked = $plan->rework(
-        $name,
-        $self->requires,
-        $self->conflicts,
+        name      => $name,
+        requires  => $self->requires,
+        conflicts => $self->conflicts,
+        note      => join "\n\n" => @{ $self->note },
     );
 
     # Get the latest instance of the change.
     my $prev = $plan->get(
         $name . [$plan->last_tagged_change->tags]->[-1]->format_name
+    );
+
+    # Make sure we have a note.
+    $reworked->request_note(
+        for     => __ 'rework',
+        scripts => [
+            (-e $reworked->deploy_file ? $reworked->deploy_file : ()),
+            (-e $reworked->revert_file ? $reworked->revert_file : ()),
+            (-e $reworked->test_file   ? $reworked->test_file   : ()),
+        ],
     );
 
     # Copy files to the new names for the previous instance of the change.
@@ -86,7 +105,7 @@ sub execute {
     # Let the user knnow what to do.
     $self->info(__x(
         'Added "{change}" to {file}.',
-        change => $reworked->format_content,
+        change => $reworked->format_op_name_dependencies,
         file   => $sqitch->plan_file,
     ));
     $self->info(__n(

@@ -14,7 +14,6 @@ use Test::NoWarnings;
 use Test::MockModule;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
-use URI;
 use lib 't/lib';
 use MockOutput;
 
@@ -77,8 +76,7 @@ ENGINE: {
     sub name_for_change_id { return 'bugaboo' }
 }
 
-my $uri = URI->new('https://github.com/theory/sqitch/');
-ok my $sqitch = App::Sqitch->new(db_name => 'mydb', uri => $uri),
+ok my $sqitch = App::Sqitch->new(db_name => 'mydb'),
     'Load a sqitch sqitch object';
 
 ##############################################################################
@@ -232,7 +230,7 @@ $record_work = 0;
 chdir 't';
 my $plan_file = file qw(sql sqitch.plan);
 my $sqitch_old = $sqitch; # Hang on to this because $change does not retain it.
-$sqitch = App::Sqitch->new( plan_file => $plan_file, uri => $uri );
+$sqitch = App::Sqitch->new( plan_file => $plan_file );
 ok $engine = App::Sqitch::Engine::whu->new( sqitch => $sqitch ),
     'Engine with sqitch with plan file';
 my $plan = $sqitch->plan;
@@ -375,7 +373,7 @@ is_deeply $engine->seen, [
 # Make sure we can deploy everything by change.
 $latest_change_id = $latest_change = undef;
 $plan->reset;
-$plan->add('lolz');
+$plan->add( name => 'lolz' );
 @changes = $plan->changes;
 ok $engine->deploy(undef, 'change'), 'Deploy everything by change';
 is $plan->position, 3, 'Plan should be at position 3';
@@ -438,8 +436,12 @@ is_deeply +MockOutput->get_info, [
 
 # Try a plan with no changes.
 NOSTEPS: {
-    my $plan_file = file qw(nonexistent.plan);
-    my $sqitch = App::Sqitch->new( plan_file => $plan_file, uri => $uri );
+    my $plan_file = file qw(empty.plan);
+    my $fh = $plan_file->open('>') or die "Cannot open $plan_file: $!";
+    say $fh '%project=empty';
+    $fh->close or die "Error closing $plan_file: $!";
+    END { $plan_file->remove }
+    my $sqitch = App::Sqitch->new( plan_file => $plan_file );
     ok $engine = App::Sqitch::Engine::whu->new( sqitch => $sqitch ),
         'Engine with sqitch with no file';
     throws_ok { $engine->deploy } 'App::Sqitch::X', 'Should die with no changes';
@@ -540,8 +542,8 @@ is_deeply +MockOutput->get_info, [
 ], 'Should have seen output of changes 3-3';
 
 # Add another couple of changes.
-$plan->add('tacos');
-$plan->add('curry');
+$plan->add(name => 'tacos' );
+$plan->add(name => 'curry' );
 @changes = $plan->changes;
 
 # Make it die.
@@ -616,7 +618,7 @@ is_deeply $vented, [
 
 # Add a change and deploy to that, to make sure it rolls back any changes since
 # last tag.
-$plan->add('dr_evil');
+$plan->add(name => 'dr_evil' );
 @changes = $plan->changes;
 $plan->reset;
 $mock_whu->mock(run_file => sub { hurl 'ROFL' if $_[1]->basename eq 'dr_evil.sql' });

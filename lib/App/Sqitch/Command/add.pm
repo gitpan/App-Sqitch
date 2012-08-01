@@ -15,18 +15,25 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.71';
+our $VERSION = '0.80';
 
 has requires => (
     is       => 'ro',
-    isa      => 'ArrayRef',
+    isa      => 'ArrayRef[Str]',
     required => 1,
     default  => sub { [] },
 );
 
 has conflicts => (
     is       => 'ro',
-    isa      => 'ArrayRef',
+    isa      => 'ArrayRef[Str]',
+    required => 1,
+    default  => sub { [] },
+);
+
+has note => (
+    is       => 'ro',
+    isa      => 'ArrayRef[Str]',
     required => 1,
     default  => sub { [] },
 );
@@ -95,6 +102,7 @@ sub options {
     return qw(
         requires|r=s@
         conflicts|c=s@
+        note|n=s@
         set|s=s%
         template-directory=s
         deploy-template=s
@@ -112,6 +120,7 @@ sub configure {
     my %params = (
         requires  => $opt->{requires}  || [],
         conflicts => $opt->{conflicts} || [],
+        note      => $opt->{note}      || [],
     );
 
     $params{template_directory} = dir $opt->{template_directory}
@@ -141,9 +150,20 @@ sub execute {
     my $sqitch = $self->sqitch;
     my $plan   = $sqitch->plan;
     my $change = $plan->add(
-        $name,
-        $self->requires,
-        $self->conflicts,
+        name      => $name,
+        requires  => $self->requires,
+        conflicts => $self->conflicts,
+        note      => join "\n\n" => @{ $self->note },
+    );
+
+    # Make sure we have a note.
+    $change->request_note(
+        for     => __ 'add',
+        scripts => [
+            ($self->with_deploy ? $change->deploy_file : ()),
+            ($self->with_revert ? $change->revert_file : ()),
+            ($self->with_test   ? $change->test_file   : ()),
+        ],
     );
 
     $self->_add(
@@ -168,7 +188,7 @@ sub execute {
     $plan->write_to( $sqitch->plan_file );
     $self->info(__x(
         'Added "{change}" to {file}',
-        change => $change->format_content,
+        change => $change->format_op_name_dependencies,
         file   => $sqitch->plan_file,
     ));
     return $self;

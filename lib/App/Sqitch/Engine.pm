@@ -9,7 +9,7 @@ use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use namespace::autoclean;
 
-our $VERSION = '0.71';
+our $VERSION = '0.80';
 
 has sqitch => (
     is       => 'ro',
@@ -752,18 +752,39 @@ The current change ID.
 
 The current change name.
 
-=item C<deployed_at>
+=item C<note>
 
-An L<App::Sqitch::DateTime> object representing the date and time at which the
-change was deployed.
-
-=item C<deployed_by>
-
-Name of the user who deployed the change.
+A brief description of the change.
 
 =item C<tags>
 
 An array reference of the names of associated tags.
+
+=item C<committed_at>
+
+An L<App::Sqitch::DateTime> object representing the date and time at which the
+change was deployed.
+
+=item C<committer_name>
+
+Name of the user who deployed the change.
+
+=item C<committer_email>
+
+Email address of the user who deployed the change.
+
+=item C<planned_at>
+
+An L<App::Sqitch::DateTime> object representing the date and time at which the
+change was added to the plan.
+
+=item C<planner_name>
+
+Name of the user who added the change to the plan.
+
+=item C<planner_email>
+
+Email address of the user who added the change to the plan.
 
 =back
 
@@ -782,20 +803,37 @@ reference containing the following keys:
 
 =item C<change_id>
 
-The change ID.
+The current change ID.
 
 =item C<change>
 
-The name of the change.
+The current change name.
 
-=item C<deployed_at>
+=item C<committed_at>
 
 An L<App::Sqitch::DateTime> object representing the date and time at which the
 change was deployed.
 
-=item C<deployed_by>
+=item C<committer_name>
 
 Name of the user who deployed the change.
+
+=item C<committer_email>
+
+Email address of the user who deployed the change.
+
+=item C<planned_at>
+
+An L<App::Sqitch::DateTime> object representing the date and time at which the
+change was added to the plan.
+
+=item C<planner_name>
+
+Name of the user who added the change to the plan.
+
+=item C<planner_email>
+
+Email address of the user who added the change to the plan.
 
 =back
 
@@ -820,14 +858,31 @@ The tag ID.
 
 The name of the tag.
 
-=item C<applied_at>
+=item C<committed_at>
 
 An L<App::Sqitch::DateTime> object representing the date and time at which the
 tag was applied.
 
-=item C<applied_by>
+=item C<committer_name>
 
-Name of the user who) or applied the tag.
+Name of the user who applied the tag.
+
+=item C<committer_email>
+
+Email address of the user who applied the tag.
+
+=item C<planned_at>
+
+An L<App::Sqitch::DateTime> object representing the date and time at which the
+tag was added to the plan.
+
+=item C<planner_name>
+
+Name of the user who added the tag to the plan.
+
+=item C<planner_email>
+
+Email address of the user who added the tag to the plan.
 
 =back
 
@@ -901,14 +956,47 @@ The change ID.
 
 The name of the change.
 
-=item C<deployed_at>
+=item C<note>
+
+A brief description of the change.
+
+=item C<tags>
+
+An array reference of the names of associated tags.
+
+=item C<requires>
+
+An array reference of the names of any changes required by the change.
+
+=item C<conflicts>
+
+An array reference of the names of any changes that conflict with the change.
+
+=item C<committed_at>
 
 An L<App::Sqitch::DateTime> object representing the date and time at which the
 event was logged.
 
-=item C<deployed_by>
+=item C<committer_name>
 
-Name of the user for whom the event was logged.
+Name of the user who deployed the change.
+
+=item C<committer_email>
+
+Email address of the user who deployed the change.
+
+=item C<planned_at>
+
+An L<App::Sqitch::DateTime> object representing the date and time at which the
+change was added to the plan.
+
+=item C<planner_name>
+
+Name of the user who added the change to the plan.
+
+=item C<planner_email>
+
+Email address of the user who added the change to the plan.
 
 =back
 

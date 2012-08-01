@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 use utf8;
-use Test::More tests => 81;
+use Test::More tests => 85;
 #use Test::More 'no_plan';
 use App::Sqitch;
 use Locale::TextDomain qw(App-Sqitch);
@@ -14,14 +14,12 @@ use Test::Dir;
 use Test::File qw(file_not_exists_ok file_exists_ok);
 use Test::File::Contents;
 use File::Path qw(make_path remove_tree);
-use URI;
 use lib 't/lib';
 use MockOutput;
 
 my $CLASS = 'App::Sqitch::Command::add';
 
 ok my $sqitch = App::Sqitch->new(
-    uri     => URI->new('https://github.com/theory/sqitch/'),
     top_dir => Path::Class::Dir->new('sql'),
 ), 'Load a sqitch sqitch object';
 my $config = $sqitch->config;
@@ -53,6 +51,7 @@ can_ok $CLASS, qw(
 is_deeply [$CLASS->options], [qw(
     requires|r=s@
     conflicts|c=s@
+    note|n=s@
     set|s=s%
     template-directory=s
     deploy-template=s
@@ -75,19 +74,23 @@ sub contents_of ($) {
 is_deeply $CLASS->configure($config, {}), {
     requires  => [],
     conflicts => [],
+    note      => [],
 }, 'Should have default configuration with no config or opts';
 
 is_deeply $CLASS->configure($config, {
     requires  => [qw(foo bar)],
     conflicts => ['baz'],
+    note      => [qw(hellow there)],
 }), {
     requires  => [qw(foo bar)],
     conflicts => ['baz'],
+    note      => [qw(hellow there)],
 }, 'Should have get requires and conflicts options';
 
 is_deeply $CLASS->configure($config, { template_directory => 't' }), {
     requires  => [],
     conflicts => [],
+    note      => [],
     template_directory => Path::Class::dir('t'),
 }, 'Should set up template directory option';
 
@@ -101,6 +104,7 @@ is_deeply $CLASS->configure($config, {
 }), {
     requires  => [],
     conflicts => [],
+    note      => [],
     with_deploy => 1,
     with_revert => 1,
     with_test => 0,
@@ -116,11 +120,13 @@ CONFIG: {
     is_deeply $CLASS->configure($config, {}), {
         requires  => [],
         conflicts => [],
+        note      => [],
     }, 'Variables should by default not be loaded from config';
 
     is_deeply $CLASS->configure($config, {set => { yo => 'dawg' }}), {
         requires  => [],
         conflicts => [],
+        note      => [],
         variables => {
             foo => 'bar',
             baz => [qw(hi there you)],
@@ -131,6 +137,7 @@ CONFIG: {
     is_deeply $CLASS->configure($config, {set => { foo => 'ick' }}), {
         requires  => [],
         conflicts => [],
+        note      => [],
         variables => {
             foo => 'ick',
             baz => [qw(hi there you)],
@@ -142,6 +149,7 @@ CONFIG: {
 # Test attributes.
 is_deeply $add->requires, [], 'Requires should be an arrayref';
 is_deeply $add->conflicts, [], 'Conflicts should be an arrayref';
+is_deeply $add->note, [], 'Notes should be an arrayref';
 is_deeply $add->variables, {}, 'Varibles should be a hashref';
 is $add->template_directory, undef, 'Default dir should be undef';
 
@@ -157,7 +165,7 @@ MOCKCONFIG: {
         is $@->message, __x(
             'Cannot find {script} template',
             script => $script,
-        ), "Should get $tmpl failure message";;
+        ), "Should get $tmpl failure note";;
     }
 }
 
@@ -195,7 +203,7 @@ MOCKCONFIG: {
     is $@->message, __x(
         'Cannot find {script} template',
         script => 'test',
-    ), "Should get unfound test template message";
+    ), "Should get unfound test template note";
 
     $config_mock->mock(system_dir => Path::Class::dir('etc'));
     is $add->_find('deploy'), Path::Class::file(qw(etc templates deploy.tmpl)),
@@ -211,6 +219,10 @@ is $ { $add->_slurp($tmpl)}, contents_of $tmpl,
 ##############################################################################
 # Test _add().
 make_path 'sql';
+my $fn = $sqitch->plan_file;
+open my $fh, '>', $fn or die "Cannot open $fn: $!";
+say $fh '%project=add';
+close $fh or die "Error closing $fn: $!";
 END { remove_tree 'sql' };
 my $out = file 'sql', 'sqitch_change_test.sql';
 file_not_exists_ok $out;
@@ -262,6 +274,14 @@ ok $add = $CLASS->new(
     template_directory => Path::Class::dir(qw(etc templates))
 ), 'Create another add with template_directory';
 
+# Override request_note().
+my $change_mocker = Test::MockModule->new('App::Sqitch::Plan::Change');
+my %request_params;
+$change_mocker->mock(request_note => sub {
+    shift;
+    %request_params = @_;
+});
+
 my $deploy_file = file qw(sql deploy widgets_table.sql);
 my $revert_file = file qw(sql revert widgets_table.sql);
 my $test_file   = file qw(sql test   widgets_table.sql);
@@ -275,6 +295,10 @@ isa_ok my $change = $plan->get('widgets_table'), 'App::Sqitch::Plan::Change',
 is $change->name, 'widgets_table', 'Change name should be set';
 is_deeply [$change->requires],  [], 'It should have no requires';
 is_deeply [$change->conflicts], [], 'It should have no conflicts';
+is_deeply \%request_params, {
+    for => __ 'add',
+    scripts => [$change->deploy_file, $change->revert_file, $change->test_file],
+}, 'It should have prompted for a note';
 
 file_exists_ok $_ for ($deploy_file, $revert_file, $test_file);
 file_contents_like +File::Spec->catfile(qw(sql deploy widgets_table.sql)),
@@ -300,11 +324,13 @@ isa_ok $change = $plan->get('widgets_table'), 'App::Sqitch::Plan::Change',
 
 # Make sure conflicts are avoided and conflicts and requires are respected.
 ok $add = $CLASS->new(
-    sqitch => $sqitch,
-    requires  => ['widgets_table'],
-    conflicts => [qw(dr_evil joker)],
+    sqitch             => $sqitch,
+    requires           => ['widgets_table'],
+    conflicts          => [qw(dr_evil joker)],
+    note               => [qw(hello there)],
+    with_test          => 0,
     template_directory => Path::Class::dir(qw(etc templates))
-), 'Create another add with template_directory';
+), 'Create another add with template_directory and no test script';
 
 $deploy_file = file qw(sql deploy foo_table.sql);
 $revert_file = file qw(sql revert foo_table.sql);
@@ -315,20 +341,25 @@ file_exists_ok $deploy_file;
 file_not_exists_ok $_ for ($revert_file, $test_file);
 is $plan->get('foo_table'), undef, 'Should not have "foo_table" in plan';
 ok $add->execute('foo_table'), 'Add change "foo_table"';
-file_exists_ok $_ for ($deploy_file, $revert_file, $test_file);
+file_exists_ok $_ for ($deploy_file, $revert_file);
+file_not_exists_ok $test_file;
 isa_ok $change = $plan->get('foo_table'), 'App::Sqitch::Plan::Change',
     '"foo_table" change';
+is_deeply \%request_params, {
+    for => __ 'add',
+    scripts => [$change->deploy_file, $change->revert_file],
+}, 'It should have prompted for a note';
 
 is $change->name, 'foo_table', 'Change name should be set to "foo_table"';
 is_deeply [$change->requires],  ['widgets_table'], 'It should have requires';
 is_deeply [$change->conflicts], [qw(dr_evil joker)], 'It should have conflicts';
+is        $change->note, "hello\n\nthere", 'It should have a comment';
 
 is_deeply +MockOutput->get_info, [
     [__x 'Skipped {file}: already exists', file => $deploy_file],
     [__x 'Created {file}', file => $revert_file],
-    [__x 'Created {file}', file => $test_file],
     [__x 'Added "{change}" to {file}',
-        change => 'foo_table :widgets_table !dr_evil !joker',
+        change => 'foo_table [:widgets_table !dr_evil !joker]',
         file   => $sqitch->plan_file,
     ],
 ], 'Info should report skipping file and include dependencies';

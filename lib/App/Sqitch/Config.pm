@@ -11,9 +11,13 @@ use utf8;
 
 extends 'Config::GitLike';
 
-our $VERSION = '0.71';
+our $VERSION = '0.80';
 
 has '+confname' => ( default => 'sqitch.conf' );
+
+# https://github.com/bestpractical/config-gitlike/pull/6
+has '+encoding' => ( default => 'UTF-8' )
+    if __PACKAGE__->meta->find_attribute_by_name('encoding');
 
 my $SYSTEM_DIR = undef;
 

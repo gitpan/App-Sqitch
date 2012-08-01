@@ -10,7 +10,20 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.71';
+our $VERSION = '0.80';
+
+has note => (
+    is       => 'ro',
+    isa      => 'ArrayRef[Str]',
+    required => 1,
+    default  => sub { [] },
+);
+
+sub options {
+    return qw(
+        note|n=s@
+    );
+}
 
 sub execute {
     my ( $self, $name ) = @_;
@@ -18,7 +31,13 @@ sub execute {
     my $plan   = $sqitch->plan;
 
     if (defined $name) {
-        my $tag = $plan->add_tag($name);
+        my $tag = $plan->tag(
+            name => $name,
+            note => join "\n\n" => @{ $self->note },
+        );
+
+        # Make sure we have a note.
+        $tag->request_note( for => __ 'tag');
 
         # We good, write the plan file back out.
         $plan->write_to( $sqitch->plan_file );
