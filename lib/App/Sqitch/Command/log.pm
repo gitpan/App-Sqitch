@@ -21,7 +21,7 @@ BEGIN {
     $ENV{ANSI_COLORS_DISABLED} = 1 unless CAN_OUTPUT_COLOR;
 }
 
-our $VERSION = '0.80';
+our $VERSION = '0.81';
 
 my %FORMATS;
 $FORMATS{raw} = <<EOF;
@@ -150,34 +150,41 @@ has formatter => (
                 e => sub { $_[0]->{event} },
                 L => sub {
                     given ($_[0]->{event}) {
-                        __ 'Deploy' when 'deploy';
-                        __ 'Revert' when 'revert';
-                        __ 'Fail'   when 'fail';
+                        when ('deploy') { return __ 'Deploy' }
+                        when ('revert') { return __ 'Revert' }
+                        when ('fail')   { return __ 'Fail'   }
                     }
                 },
                 l => sub {
                     given ($_[0]->{event}) {
-                        __ 'deploy' when 'deploy';
-                        __ 'revert' when 'revert';
-                        __ 'fail'   when 'fail';
+                        when ('deploy') { return __ 'deploy' }
+                        when ('revert') { return __ 'revert' }
+                        when ('fail')   { return __ 'fail'   }
                     }
                 },
                 _ => sub {
                     given ($_[1]) {
-                        __ 'Event:    ' when 'event';
-                        __ 'Change:   ' when 'change';
-                        __ 'Committer:' when 'committer';
-                        __ 'Planner:  ' when 'planner';
-                        __ 'By:       ' when 'by';
-                        __ 'Date:     ' when 'date';
-                        __ 'Committed:' when 'committed';
-                        __ 'Planned:  ' when 'planned';
-                        __ 'Name:     ' when 'name';
-                        __ 'Email:    ' when 'email';
-                        __ 'Requires: ' when 'requires';
-                        __ 'Conflicts:' when 'conflicts';
-                        hurl log => __ 'No label passed to the _ format'
-                            when undef;
+                        when ('event')     { return __ 'Event:    ' }
+                        when ('change')    { return __ 'Change:   ' }
+                        when ('committer') { return __ 'Committer:' }
+                        when ('planner')   { return __ 'Planner:  ' }
+                        when ('by')        { return __ 'By:       ' }
+                        when ('date')      { return __ 'Date:     ' }
+                        when ('committed') { return __ 'Committed:' }
+                        when ('planned')   { return __ 'Planned:  ' }
+                        when ('name')      { return __ 'Name:     ' }
+                        when ('email')     { return __ 'Email:    ' }
+                        when ('requires')  { return __ 'Requires: ' }
+                        when ('conflicts') {return __ 'Conflicts:'  }
+                        when (undef)       {
+                            hurl log => __ 'No label passed to the _ format';
+                        }
+                        default {
+                            hurl log => __x(
+                                'Unknown label "{label}" passed to the _ format',
+                                label => $_[1],
+                            );
+                        }
                     };
                 },
                 H => sub { $_[0]->{change_id} },
