@@ -1,5 +1,7 @@
 package App::Sqitch;
 
+# ABSTRACT: Sane database change management
+
 use v5.10.1;
 use strict;
 use warnings;
@@ -8,18 +10,18 @@ use Getopt::Long;
 use Hash::Merge qw(merge);
 use Path::Class;
 use Config;
-use Locale::TextDomain qw(App-Sqitch);
+use Locale::TextDomain qw(1.20 App-Sqitch);
 use App::Sqitch::X qw(hurl);
-use Moose;
+use Moose 2.0300;
 use Encode qw(encode_utf8);
 use Try::Tiny;
 use List::Util qw(first);
-use IPC::System::Simple qw(runx capturex $EXITVAL);
-use Moose::Util::TypeConstraints;
-use MooseX::Types::Path::Class;
-use namespace::autoclean;
+use IPC::System::Simple 1.17, qw(runx capturex $EXITVAL);
+use Moose::Util::TypeConstraints 2.0300;
+use MooseX::Types::Path::Class 0.05;
+use namespace::autoclean 0.11;
 
-our $VERSION = '0.82';
+our $VERSION = '0.90';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -33,6 +35,13 @@ BEGIN {
         hurl user => __ 'User email may not contain ">"' if />/;
         1;
     };
+
+    subtype 'CoreEngine', as 'Str', where {
+        hurl core => __x('Unknown engine: {engine}', engine => $_)
+            unless $_ ~~ [qw(pg sqlite)];
+        1;
+    };
+
 }
 
 # Okay to loas Sqitch classes now that typess are created.
@@ -62,20 +71,24 @@ has plan => (
 has _engine => (
     is      => 'ro',
     lazy    => 1,
-    isa     => maybe_type( enum [qw(pg mysql sqlite)] ),
+    isa     => 'CoreEngine',
     default => sub {
-        shift->config->get( key => 'core.engine' );
+        shift->config->get( key => 'core.engine' ) || hurl core => __(
+            'No engine specified; use --engine or set core.engine'
+        );
     }
 );
 has engine => (
     is      => 'ro',
-    isa     => 'Maybe[App::Sqitch::Engine]',
+    isa     => 'App::Sqitch::Engine',
     lazy    => 1,
     default => sub {
         my $self = shift;
-        my $name = $self->_engine or return;
         require App::Sqitch::Engine;
-        App::Sqitch::Engine->load({ sqitch => $self, engine => $name });
+        App::Sqitch::Engine->load({
+            sqitch => $self,
+            engine => $self->_engine,
+        });
     }
 );
 

@@ -4,7 +4,7 @@ use v5.10.1;
 use strict;
 use warnings;
 use utf8;
-use Template::Tiny;
+use Template::Tiny 0.11;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use Moose;
@@ -15,7 +15,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.82';
+our $VERSION = '0.90';
 
 has requires => (
     is       => 'ro',

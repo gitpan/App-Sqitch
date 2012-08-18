@@ -5,9 +5,12 @@ use utf8;
 use Moose;
 use Sub::Exporter::Util ();
 use Sub::Exporter -setup => [qw(hurl)];
+use Role::HasMessage 0.005;
+use Role::Identifiable::HasIdent 0.005;
+use Role::Identifiable::HasTags 0.005;
 use overload '""' => 'as_string';
 
-our $VERSION = '0.82';
+our $VERSION = '0.90';
 
 has message => (
     is       => 'ro',

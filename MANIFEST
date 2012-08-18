@@ -1,9 +1,18 @@
-bin/sqitch
 Build.PL
 Changes
+LICENSE
+MANIFEST
+META.json
+META.yml
+README
+README.md
+bin/sqitch
+dist/sqitch-pg.spec
+dist/sqitch.spec
 etc/templates/deploy.tmpl
 etc/templates/revert.tmpl
 etc/templates/test.tmpl
+inc/Module/Build/Sqitch.pm
 lib/App/Sqitch.pm
 lib/App/Sqitch/Command.pm
 lib/App/Sqitch/Command/add.pm
@@ -26,6 +35,7 @@ lib/App/Sqitch/Plan.pm
 lib/App/Sqitch/Plan/Blank.pm
 lib/App/Sqitch/Plan/Change.pm
 lib/App/Sqitch/Plan/ChangeList.pm
+lib/App/Sqitch/Plan/Depend.pm
 lib/App/Sqitch/Plan/Line.pm
 lib/App/Sqitch/Plan/LineList.pm
 lib/App/Sqitch/Plan/Pragma.pm
@@ -52,13 +62,9 @@ lib/sqitch-status.pod
 lib/sqitch-tag-usage.pod
 lib/sqitch-tag.pod
 lib/sqitch.pod
+lib/sqitchchanges.pod
 lib/sqitchcommands.pod
 lib/sqitchtutorial.pod
-MANIFEST			This list of files
-META.json
-META.yml
-priv/Module/Build/Sqitch.pm
-README.md
 t/add.t
 t/add_change.conf
 t/base.t
@@ -69,6 +75,7 @@ t/command.t
 t/config.t
 t/configuration.t
 t/datetime.t
+t/depend.t
 t/deploy.t
 t/die.pl
 t/echo.pl
@@ -100,6 +107,7 @@ t/plans/dupe-change.plan
 t/plans/dupe-tag.plan
 t/plans/multi.plan
 t/plans/pragmas.plan
+t/plans/project_deps.plan
 t/plans/reserved-tag.plan
 t/plans/widgets.plan
 t/pod-coverage.t
@@ -120,3 +128,4 @@ t/tag.t
 t/tag_cmd.t
 t/user.conf
 t/x.t
+xt/release/pod-spelling.t
