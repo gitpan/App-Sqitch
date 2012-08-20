@@ -256,7 +256,8 @@ subtest 'live database' => sub {
     try {
         $pg->_dbh;
     } catch {
-        plan skip_all => "Unable to connect to a database for testing: $_";
+        plan skip_all => "Unable to connect to a database for testing: "
+            . eval { $_->message } || $_;
     };
 
     ok !$pg->initialized, 'Database should not yet be initialized';
@@ -757,6 +758,10 @@ subtest 'live database' => sub {
         planner_email   => $change2->planner_email,
         planned_at      => $change2->timestamp,
     }, 'The new state should reference latest change';
+
+    # These were reverted and re-deployed, so might have new timestamps.
+    $current_changes[0]->{committed_at} = dt_for_change( $change2->id );
+    $current_changes[1]->{committed_at} = dt_for_change( $change->id );
     is_deeply all( $pg->current_changes ), \@current_changes,
         'Should still have two current changes in reverse chronological order';
     is_deeply all( $pg->current_tags ), \@current_tags,
