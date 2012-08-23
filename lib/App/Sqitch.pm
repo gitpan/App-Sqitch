@@ -21,7 +21,7 @@ use Moose::Util::TypeConstraints 2.0300;
 use MooseX::Types::Path::Class 0.05;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.91';
+our $VERSION = '0.911';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -194,11 +194,11 @@ has user_name => (
             );
             if ($^O eq 'MSWin32') {
                 try { require Win32API::Net } || return $sysname;
-                Win32API::Net::UserGetInfo( "", $self->sysuser, 1101, my $info = {} );
+                Win32API::Net::UserGetInfo( "", $sysname, 10, my $info = {} );
                 return $info->{fullName} || $sysname;
             }
             require User::pwent;
-            (User::pwent::getpwnam($self->sysuser)->gecos)[0] || $sysname;
+            (User::pwent::getpwnam($sysname)->gecos)[0] || $sysname;
         };
     }
 );
