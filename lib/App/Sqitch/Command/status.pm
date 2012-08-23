@@ -14,7 +14,7 @@ use Try::Tiny;
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.902';
+our $VERSION = '0.91';
 
 has show_changes => (
     is      => 'ro',
@@ -182,7 +182,7 @@ sub emit_changes {
     return $self unless $self->show_changes;
 
     # Emit the header.
-    my $changes = _all $self->engine->current_changes;
+    my $changes = _all $self->engine->current_changes( $self->project );
     $self->comment('');
     $self->comment(__n 'Change:', 'Changes:', @{ $changes });
 
@@ -208,7 +208,7 @@ sub emit_tags {
     return $self unless $self->show_tags;
 
     # Emit the header.
-    my $tags = _all $self->engine->current_tags;
+    my $tags = _all $self->engine->current_tags( $self->project );
     $self->comment('');
 
     # If no tags, say so and return.

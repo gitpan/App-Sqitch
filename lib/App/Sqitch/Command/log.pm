@@ -11,17 +11,18 @@ use Moose;
 use Moose::Util::TypeConstraints;
 use String::Formatter;
 use namespace::autoclean;
+use Try::Tiny;
 use Term::ANSIColor 2.02, qw(color colorvalid);
 extends 'App::Sqitch::Command';
-use constant CAN_OUTPUT_COLOR => $^O =~ /MSWin32/
-    ? eval { require Win32::Console::ANSI }
+use constant CAN_OUTPUT_COLOR => $^O eq 'MSWin32'
+    ? try { require Win32::Console::ANSI }
     : -t *STDOUT;
 
 BEGIN {
     $ENV{ANSI_COLORS_DISABLED} = 1 unless CAN_OUTPUT_COLOR;
 }
 
-our $VERSION = '0.902';
+our $VERSION = '0.91';
 
 my %FORMATS;
 $FORMATS{raw} = <<EOF;

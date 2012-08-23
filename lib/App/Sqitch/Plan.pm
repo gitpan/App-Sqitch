@@ -17,7 +17,7 @@ use namespace::autoclean;
 use Moose;
 use constant SYNTAX_VERSION => '1.0.0-b2';
 
-our $VERSION = '0.902';
+our $VERSION = '0.91';
 
 # Like [:punct:], but excluding _. Copied from perlrecharclass.
 my $punct = q{-!"#$%&'()*+,./:;<=>?@[\\]^`{|}~};
@@ -736,7 +736,11 @@ sub rework {
 sub _check_dependencies {
     my ( $self, $change, $action ) = @_;
     my $changes = $self->_changes;
+    my $project = $self->project;
     for my $req ( $change->requires ) {
+        # use Test::More; diag $req->key_name;
+        # diag $req->project, ' ne ', $project;
+        next if $req->project ne $project;
         $req = $req->key_name;
         next if defined $changes->index_of($req =~ /@/ ? $req : $req . '@HEAD');
         my $name = $change->name;

@@ -21,7 +21,7 @@ use Moose::Util::TypeConstraints 2.0300;
 use MooseX::Types::Path::Class 0.05;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.902';
+our $VERSION = '0.91';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -167,14 +167,38 @@ has verbosity => (
     }
 );
 
+has sysuser => (
+    is       => 'ro',
+    isa      => 'Maybe[Str]',
+    lazy     => 1,
+    default  => sub {
+        # Adapted from User.pm.
+        return getlogin
+            || scalar getpwuid( $< )
+            || $ENV{ LOGNAME }
+            || $ENV{ USER }
+            || $ENV{ USERNAME }
+            || try { require Win32; Win32::LoginName() };
+    },
+);
+
 has user_name => (
     is      => 'ro',
     lazy    => 1,
     isa     => 'UserName',
     default => sub {
-        shift->config->get( key => 'user.name' ) || do {
+        my $self = shift;
+        $self->config->get( key => 'user.name' ) || do {
+            my $sysname = $self->sysuser || hurl user => __(
+                    'Cannot find your name; run sqitch config --user user.name "YOUR NAME"'
+            );
+            if ($^O eq 'MSWin32') {
+                try { require Win32API::Net } || return $sysname;
+                Win32API::Net::UserGetInfo( "", $self->sysuser, 1101, my $info = {} );
+                return $info->{fullName} || $sysname;
+            }
             require User::pwent;
-            (User::pwent::getpwnam(getlogin)->gecos)[0];
+            (User::pwent::getpwnam($self->sysuser)->gecos)[0] || $sysname;
         };
     }
 );
@@ -184,9 +208,13 @@ has user_email => (
     lazy    => 1,
     isa     => 'UserEmail',
     default => sub {
-        shift->config->get( key => 'user.email' ) || do {
+        my $self = shift;
+        $self->config->get( key => 'user.email' ) || do {
+            my $sysname = $self->sysuser || hurl user => __(
+                'Cannot infer your email address; run sqitch config --user user.email you@host.com'
+            );
             require Sys::Hostname;
-            getlogin . '@' . Sys::Hostname::hostname();
+            "$sysname@" . Sys::Hostname::hostname();
         };
     }
 );
@@ -704,14 +732,6 @@ it.
 =head1 To Do
 
 =over
-
-=item * Add cross-project dependency specification using project name.
-
-=item * Add `projects` table to C<Engine/pg> and populate based on plan.
-
-=item * Add project column and hash keys to C<Engine/pg>.
-
-=item * Allow C<status> and C<log> to work with no plan or config?
 
 =item * Add custom formatting support to C<status>.
 
