@@ -1,5 +1,9 @@
 Revision history for Perl extension App::Sqitch
 
+0.913  2012-08-28T17:31:29Z
+     - Fixed oversight in test that still relied on `$ENV{USER}` instead of
+       `Sqitch->sysuser`,
+
 0.912 2012-08-27T21:23:19Z
      - Fall back on `Sqitch->sysuser` when looking for the PostgreSQL user,
        rather than just `$ENV{USER}`. The method does a lot more work to find
