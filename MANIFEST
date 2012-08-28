@@ -16,6 +16,7 @@ inc/Module/Build/Sqitch.pm
 lib/App/Sqitch.pm
 lib/App/Sqitch/Command.pm
 lib/App/Sqitch/Command/add.pm
+lib/App/Sqitch/Command/bundle.pm
 lib/App/Sqitch/Command/config.pm
 lib/App/Sqitch/Command/deploy.pm
 lib/App/Sqitch/Command/help.pm
@@ -43,6 +44,8 @@ lib/App/Sqitch/Plan/Tag.pm
 lib/App/Sqitch/X.pm
 lib/sqitch-add-usage.pod
 lib/sqitch-add.pod
+lib/sqitch-bundle-usage.pod
+lib/sqitch-bundle.pod
 lib/sqitch-config-usage.pod
 lib/sqitch-config.pod
 lib/sqitch-deploy-usage.pod
@@ -69,6 +72,7 @@ t/add.t
 t/add_change.conf
 t/base.t
 t/blank.t
+t/bundle.t
 t/change.t
 t/changelist.t
 t/command.t

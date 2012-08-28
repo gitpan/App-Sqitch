@@ -9,7 +9,7 @@ use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use namespace::autoclean;
 
-our $VERSION = '0.913';
+our $VERSION = '0.92';
 
 has sqitch => (
     is       => 'ro',
@@ -681,7 +681,9 @@ an exception
   $engine->register_project;
 
 Registers the current project plan in the database. The implementation should
-insert the project name and URI if they have not already been inserted.
+insert the project name and URI if they have not already been inserted. If a
+project with the same name but different URI already exists, an exception
+should be thrown.
 
 =head3 C<is_deployed_tag>
 
