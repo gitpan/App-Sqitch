@@ -1,12 +1,14 @@
+%define cpanversion 0.921
 Name:           sqitch-pg
-Version:        0.92
+Version:        %(%{__perl} -E 'say sprintf "%.3f", %{cpanversion}')
 Release:        1%{?dist}
 Summary:        Sane PostgreSQL database change management
 License:        MIT
 Group:          Development/Libraries
 URL:            http://sqitch.org/
+BuildArch:      noarch
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
-Requires:       sqitch >= 0.92
+Requires:       sqitch >= %{version}
 Requires:       postgresql91
 Requires:       perl(DBI)
 Requires:       perl(DBD::Pg)
@@ -29,7 +31,10 @@ package bundles the Sqith PostgreSQL support.
 %files
 
 %changelog
-* Tue Aug 28 2012 David E. Wheeler <david.wheeler@iovation.com> 0.92-1
+* Wed Aug 29 2012 David E. Wheeler <david.wheeler@iovation.com> 0.921-1
+- Upgrade to v0.921.
+
+* Tue Aug 28 2012 David E. Wheeler <david.wheeler@iovation.com> 0.920-1
 - Upgrade to v0.92.
 
 * Tue Aug 28 2012 David E. Wheeler <david.wheeler@iovation.com> 0.913-1

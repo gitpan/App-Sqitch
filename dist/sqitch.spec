@@ -1,17 +1,18 @@
+%define cpanversion 0.921
 Name:           sqitch
-Version:        0.92
+Version:        %(%{__perl} -E 'say sprintf "%.3f", %{cpanversion}')
 Release:        1%{?dist}
 Summary:        Sane database change management
 License:        MIT
 Group:          Development/Libraries
 URL:            http://sqitch.org/
-Source0:        http://www.cpan.org/modules/by-module/App/App-Sqitch-%{version}.tar.gz
+Source0:        http://www.cpan.org/modules/by-module/App/App-Sqitch-%{cpanversion}.tar.gz
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildArch:      noarch
 BuildRequires:  perl >= 1:v5.10.1
 BuildRequires:  perl(Capture::Tiny) >= 0.12
 BuildRequires:  perl(Config)
-BuildRequires:  perl(Config::GitLike) >= 1.07
+BuildRequires:  perl(Config::GitLike) >= 1.09
 BuildRequires:  perl(constant)
 BuildRequires:  perl(DateTime)
 BuildRequires:  perl(DBI)
@@ -68,7 +69,7 @@ BuildRequires:  perl(User::pwent)
 BuildRequires:  perl(utf8)
 BuildRequires:  perl(warnings)
 Requires:       perl(Config)
-Requires:       perl(Config::GitLike) >= 1.07
+Requires:       perl(Config::GitLike) >= 1.09
 Requires:       perl(constant)
 Requires:       perl(DateTime)
 Requires:       perl(Digest::SHA1)
@@ -124,7 +125,7 @@ database change management. The philosophy and functionality is inspired by
 Git.
 
 %prep
-%setup -q -n App-Sqitch-%{version}
+%setup -q -n App-Sqitch-%{cpanversion}
 
 %build
 %{__perl} Build.PL installdirs=vendor
@@ -153,7 +154,10 @@ rm -rf $RPM_BUILD_ROOT
 %{etcdir}/*
 
 %changelog
-* Tue Aug 28 2012 David E. Wheeler <david.wheeler@iovation.com> 0.92-1
+* Wed Aug 29 2012 David E. Wheeler <david.wheeler@iovation.com> 0.921-1
+- Upgrade to v0.921.
+
+* Tue Aug 28 2012 David E. Wheeler <david.wheeler@iovation.com> 0.920-1
 - Upgrade to v0.92.
 
 * Tue Aug 28 2012 David E. Wheeler <david.wheeler@iovation.com> 0.913-1

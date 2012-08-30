@@ -3,7 +3,7 @@ abstract: 'Sane database change management'
 author:
   - 'David E. Wheeler <david@justatheory.com>'
 build_requires:
-  Capture::Tiny: 0
+  Capture::Tiny: 0.12
   File::Spec: 0
   FindBin: 0
   Module::Build: 0.35
@@ -42,11 +42,11 @@ requires:
   Getopt::Long: 0
   Hash::Merge: 0
   IO::Pager: 0
-  IPC::System::Simple: 0
+  IPC::System::Simple: 1.17
   List::Util: 0
   Locale::TextDomain: 0
   Moose: 2.0300
-  Moose::Meta::Attribute::Native: 0
+  Moose::Meta::Attribute::Native: 2.0300
   Moose::Util::TypeConstraints: 2.0300
   MooseX::Types::Path::Class: 0.05
   POSIX: 0
@@ -62,12 +62,11 @@ requires:
   Sub::Exporter::Util: 0
   Sys::Hostname: 0
   Template::Tiny: 0.11
-  Term::ANSIColor: 0
+  Term::ANSIColor: 2.02
   Throwable: 0
   Try::Tiny: 0
   URI: 0
   User::pwent: 0
-  Win32::Locale: 0
   constant: 0
   namespace::autoclean: 0.11
   overload: 0
@@ -80,4 +79,4 @@ resources:
   bugtracker: http://github.com/theory/sqitch/issues/
   homepage: http://sqitch.org/
   repository: http://github.com/theory/sqitch/
-version: 0.92
+version: 0.921

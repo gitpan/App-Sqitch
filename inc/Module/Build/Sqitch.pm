@@ -2,7 +2,8 @@ package Module::Build::Sqitch;
 
 use strict;
 use warnings;
-use base 'Module::Build';
+use Module::Build 0.35;
+use parent 'Module::Build';
 
 sub new {
     my ( $class, %p ) = @_;
@@ -13,6 +14,7 @@ sub new {
             Win32::Console::ANSI
             Win32API::Net
         );
+        $p{requires}{'Win32::Locale'} = 0;
     }
     my $self = $class->SUPER::new(%p);
     $self->add_build_element('etc');
