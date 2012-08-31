@@ -230,6 +230,7 @@ can_ok $CLASS, qw(
     log_deploy_change
     log_fail_change
     log_revert_change
+    earliest_change_id
     latest_change_id
     is_deployed_tag
     is_deployed_change
@@ -278,7 +279,8 @@ subtest 'live database' => sub {
         sqitch_schema => '__sqitchtest',
     ), 'Create a pg with postgres user and __sqitchtest schema';
 
-    is $pg->latest_change_id, undef, 'No init, no changes';
+    is $pg->earliest_change_id, undef, 'No init, earliest change';
+    is $pg->latest_change_id, undef, 'No init, no latest change';
 
     ok !$pg->initialized, 'Database should no longer seem initialized';
     push @cleanup, 'DROP SCHEMA __sqitchtest CASCADE';
@@ -287,7 +289,8 @@ subtest 'live database' => sub {
     is $pg->_dbh->selectcol_arrayref('SHOW search_path')->[0], '__sqitchtest',
         'The search path should be set to the new path';
 
-    is $pg->latest_change_id, undef, 'Still no changes';
+    is $pg->earliest_change_id, undef, 'Still no earlist change';
+    is $pg->latest_change_id, undef, 'Still no latest changes';
 
     # Make sure a second attempt to initialize dies.
     throws_ok { $pg->initialize } 'App::Sqitch::X',
@@ -425,7 +428,10 @@ subtest 'live database' => sub {
     ok $pg->log_deploy_change($change), 'Deploy "users" change';
     ok $pg->is_deployed_change($change), 'The change should now be deployed';
 
+    is $pg->earliest_change_id, $change->id, 'Should get users ID for earliest change ID';
+    is $pg->earliest_change_id(1), undef, 'Should get no change offset 1 from earliest';
     is $pg->latest_change_id, $change->id, 'Should get users ID for latest change ID';
+    is $pg->latest_change_id(1), undef, 'Should get no change offset 1 from latest';
 
     is_deeply all_changes(), [[
         $change->id, 'users', 'pg', '', $sqitch->user_name, $sqitch->user_email,
@@ -531,6 +537,7 @@ subtest 'live database' => sub {
     ok $pg->log_revert_change($change), 'Revert "users" change';
     ok !$pg->is_deployed_change($change), 'The change should no longer be deployed';
 
+    is $pg->earliest_change_id, undef, 'Should get undef for earliest change';
     is $pg->latest_change_id, undef, 'Should get undef for latest change';
 
     is_deeply all_changes(), [],
@@ -587,6 +594,7 @@ subtest 'live database' => sub {
     # Test log_fail_change().
     ok $pg->log_fail_change($change), 'Fail "users" change';
     ok !$pg->is_deployed_change($change), 'The change still should not be deployed';
+    is $pg->earliest_change_id, undef, 'Should still get undef for earliest change';
     is $pg->latest_change_id, undef, 'Should still get undef for latest change';
     is_deeply all_changes(), [], 'Still should have not changes table record';
     is_deeply all_tags(), [], 'Should still have no tag records';
@@ -649,13 +657,23 @@ subtest 'live database' => sub {
     # Test a change with dependencies.
     ok $pg->log_deploy_change($change),    'Deploy the change again';
     ok $pg->is_deployed_tag($tag),     'The tag again should be deployed';
-    is $pg->latest_change_id, $change->id, 'Should still get users ID for latest change ID';
+    is $pg->earliest_change_id, $change->id, 'Should again get users ID for earliest change ID';
+    is $pg->earliest_change_id(1), undef, 'Should still get no change offset 1 from earliest';
+    is $pg->latest_change_id, $change->id, 'Should again get users ID for latest change ID';
+    is $pg->latest_change_id(1), undef, 'Should still get no change offset 1 from latest';
 
     ok my $change2 = $plan->change_at(1),   'Get the second change';
     my ($req) = $change2->requires;
     ok $req->resolved_id($change->id),      'Set resolved ID in required depend';
     ok $pg->log_deploy_change($change2),    'Deploy second change';
+    is $pg->earliest_change_id, $change->id, 'Should still get users ID for earliest change ID';
+    is $pg->earliest_change_id(1), $change2->id,
+        'Should get "widgets" offset 1 from earliest';
+    is $pg->earliest_change_id(2), undef, 'Should get no change offset 2 from earliest';
     is $pg->latest_change_id, $change2->id, 'Should get "widgets" ID for latest change ID';
+    is $pg->latest_change_id(1), $change->id,
+        'Should get "user" offset 1 from earliest';
+    is $pg->latest_change_id(2), undef, 'Should get no change offset 2 from latest';
 
     is_deeply all_changes(), [
         [
@@ -923,7 +941,19 @@ subtest 'live database' => sub {
     ok my $barney = $plan->get('barney'), 'Get the "barney" change';
     ok $pg->log_deploy_change($barney),   'Deploy "barney"';
 
+    is $pg->earliest_change_id, $change->id, 'Earliest change should sill be "users"';
+    is $pg->earliest_change_id(1), $change2->id,
+        'Should still get "widgets" offset 1 from earliest';
+    is $pg->earliest_change_id(2), $fred->id,
+        'Should get "fred" offset 2 from earliest';
+    is $pg->earliest_change_id(3), $barney->id,
+        'Should get "barney" offset 3 from earliest';
+
     is $pg->latest_change_id, $barney->id, 'Latest change should be "barney"';
+    is $pg->latest_change_id(1), $fred->id, 'Should get "fred" offset 1 from latest';
+    is $pg->latest_change_id(2), $change2->id, 'Should get "widgets" offset 2 from latest';
+    is $pg->latest_change_id(3), $change->id, 'Should get "users" offset 3 from latest';
+
     is_deeply $pg->current_state, {
         project         => 'pg',
         change_id       => $barney->id,
@@ -1134,6 +1164,8 @@ subtest 'live database' => sub {
     ok !grep( { $_ eq $ext_change->id } $pg->deployed_change_ids_since($change)),
         'deployed_change_ids_since should not include external change';
 
+    is $pg->earliest_change_id, $change->id,
+        'Earliest change should sill be "users"';
     isnt $pg->latest_change_id, $ext_change->id,
         'Latest change ID should not be from external project';
 

@@ -21,7 +21,7 @@ use Moose::Util::TypeConstraints 2.0300;
 use MooseX::Types::Path::Class 0.05;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.922';
+our $VERSION = '9.93';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -728,18 +728,6 @@ log:
 Send a warning messages to C<STDERR>. Warnings will have C<warning: > prefixed
 to every line. Use if something unexpected happened but you can recover from
 it.
-
-=head1 To Do
-
-=over
-
-=item * Add custom formatting support to C<status>.
-
-=item * Add support for C<^> and other shortcuts when specifying changes.
-
-=item * Add C<plan> command, similar to C<log> but shows what's in a plan.
-
-=back
 
 =head1 Author
 

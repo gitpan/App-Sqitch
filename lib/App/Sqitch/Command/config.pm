@@ -14,7 +14,7 @@ use Moose::Util::TypeConstraints;
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.922';
+our $VERSION = '9.93';
 
 has file => (
     is      => 'ro',
@@ -631,14 +631,6 @@ Help for the C<config> command to the Sqitch command-line client.
 =item L<sqitch>
 
 The Sqitch command-line client.
-
-=back
-
-=head1 To Do
-
-=over
-
-=item * Make exit codes the same as C<git-config>.
 
 =back
 

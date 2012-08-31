@@ -13,7 +13,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Engine';
 
-our $VERSION = '0.922';
+our $VERSION = '9.93';
 
 has client => (
     is       => 'ro',
@@ -580,20 +580,29 @@ sub _fetch_item {
     };
 }
 
-sub latest_change_id {
-    my $self = shift;
+sub _cid {
+    my ( $self, $ord, $offset ) = @_;
     return try {
-        $self->_dbh->selectcol_arrayref(q{
+        $self->_dbh->selectcol_arrayref(qq{
             SELECT change_id
               FROM changes
              WHERE project = ?
-             ORDER BY committed_at DESC
+             ORDER BY committed_at $ord
              LIMIT 1
-        }, undef, $self->plan->project)->[0];
+            OFFSET COALESCE(?::bigint, NULL)
+        }, undef, $self->plan->project, $offset)->[0];
     } catch {
         return if $DBI::state eq '42P01'; # undefined_table
         die $_;
     };
+}
+
+sub earliest_change_id {
+    shift->_cid('ASC', @_);
+}
+
+sub latest_change_id {
+    shift->_cid('DESC', @_);
 }
 
 sub deployed_change_ids {

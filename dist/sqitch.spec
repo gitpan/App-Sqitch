@@ -1,4 +1,4 @@
-%define cpanversion 0.922
+%define cpanversion 9.93
 Name:           sqitch
 Version:        %(%{__perl} -E 'say sprintf "%.3f", %{cpanversion}')
 Release:        1%{?dist}
@@ -154,6 +154,9 @@ rm -rf $RPM_BUILD_ROOT
 %{etcdir}/*
 
 %changelog
+* Fri Aug 31 2012 David E. Wheeler <david.wheeler@iovation.com> 0.930-1
+- Upgrade to v0.93.
+
 * Thu Aug 30 2012 David E. Wheeler <david.wheeler@iovation.com> 0.922-1
 - Upgrade to v0.922.
 

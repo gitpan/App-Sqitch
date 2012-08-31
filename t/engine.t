@@ -4,8 +4,8 @@ use strict;
 use warnings;
 use v5.10.1;
 use utf8;
-#use Test::More tests => 235;
-use Test::More 'no_plan';
+use Test::More tests => 248;
+#use Test::More 'no_plan';
 use App::Sqitch;
 use App::Sqitch::Plan;
 use Path::Class;
@@ -36,7 +36,7 @@ my @resolved;
 my @requiring;
 my $die = '';
 my $record_work = 1;
-my ( $latest_change, $latest_change_id, $initialized );
+my ( $earliest_change_id, $latest_change_id, $initialized );
 ENGINE: {
     # Stub out a engine.
     package App::Sqitch::Engine::whu;
@@ -62,6 +62,7 @@ ENGINE: {
     sub is_deployed_change { push @SEEN => [ is_deployed_change  => $_[1] ]; $is_deployed_change }
     sub change_id_for_depend { push @SEEN => [ change_id_for_depend => $_[1] ]; shift @resolved }
     sub changes_requiring_change { push @SEEN => [ changes_requiring_change => $_[1] ]; @requiring }
+    sub earliest_change_id { push @SEEN => [ earliest_change_id  => $_[1] ]; $earliest_change_id }
     sub latest_change_id   { push @SEEN => [ latest_change_id    => $_[1] ]; $latest_change_id }
     sub initialized        { push @SEEN => 'initialized'; $initialized }
     sub initialize         { push @SEEN => 'initialize' }
@@ -166,6 +167,7 @@ for my $abs (qw(
     is_deployed_change
     change_id_for_depend
     changes_requiring_change
+    earliest_change_id
     latest_change_id
     deployed_change_ids
     deployed_change_ids_since
@@ -228,7 +230,7 @@ is_deeply +MockOutput->get_info, [[
 $record_work = 0;
 
 ##############################################################################
-# Test latest_change().
+# Test earliest_change() and latest_change().
 chdir 't';
 my $plan_file = file qw(sql sqitch.plan);
 my $sqitch_old = $sqitch; # Hang on to this because $change does not retain it.
@@ -240,9 +242,25 @@ my @changes = $plan->changes;
 
 $latest_change_id = $changes[0]->id;
 is $engine->latest_change, $changes[0], 'Should get proper change from latest_change()';
+is_deeply $engine->seen, [[ latest_change_id => undef ]],
+    'Latest change ID should have been called with no arg';
 $latest_change_id = $changes[2]->id;
-is $engine->latest_change, $changes[2], 'Should again get proper change from latest_change()';
+is $engine->latest_change(2), $changes[2],
+    'Should again get proper change from latest_change()';
+is_deeply $engine->seen, [[ latest_change_id => 2 ]],
+    'Latest change ID should have been called with offset arg';
 $latest_change_id = undef;
+
+$earliest_change_id = $changes[0]->id;
+is $engine->earliest_change, $changes[0], 'Should get proper change from earliest_change()';
+is_deeply $engine->seen, [[ earliest_change_id => undef ]],
+    'Earliest change ID should have been called with no arg';
+$earliest_change_id = $changes[2]->id;
+is $engine->earliest_change(4), $changes[2],
+    'Should again get proper change from earliest_change()';
+is_deeply $engine->seen, [[ earliest_change_id => 4 ]],
+    'Earliest change ID should have been called with offset arg';
+$earliest_change_id = undef;
 
 ##############################################################################
 # Test _sync_plan()
@@ -267,7 +285,7 @@ is $engine->start_at, 'users@alpha', 'start_at should now be users@alpha';
 ##############################################################################
 # Test deploy.
 can_ok $CLASS, 'deploy';
-$latest_change_id = $latest_change = undef;
+$latest_change_id = undef;
 $plan->reset;
 $engine->seen;
 @changes = $plan->changes;
@@ -303,7 +321,7 @@ is_deeply +MockOutput->get_info, [
     ],
     [__x 'Deploying changes through {target} to {destination}',
         destination =>  $engine->destination,
-        target      => '@alpha'
+        target      => $plan->get('@alpha')->format_name_with_tags,
     ],
     ['  + ', 'roles'],
     ['  + ', 'users @alpha'],
@@ -328,7 +346,7 @@ is $deploy_meth, '_deploy_by_tag', 'Should have called _deploy_by_tag()';
 is_deeply +MockOutput->get_info, [
     [__x 'Deploying changes through {target} to {destination}',
         destination =>  $engine->destination,
-        target      => '@alpha'
+        target      => $plan->get('@alpha')->format_name_with_tags,
     ],
     ['  + ', 'roles'],
     ['  + ', 'users @alpha'],
@@ -367,7 +385,7 @@ is_deeply $engine->seen, [
 ], 'Should have called latest_item() and latest_tag()';
 
 # Make sure we can deploy everything by change.
-$latest_change_id = $latest_change = undef;
+$latest_change_id = undef;
 $plan->reset;
 $plan->add( name => 'lolz' );
 @changes = $plan->changes;
@@ -1060,9 +1078,9 @@ is_deeply $engine->seen, [
 ], 'Should have reverted only changes after @alpha';
 is_deeply +MockOutput->get_info, [
     [__x(
-        'Reverting from {destination} to {target}',
+        'Reverting changes to {target} from {destination}',
         destination => $engine->destination,
-        target      => '@alpha',
+        target      => $plan->get('@alpha')->format_name_with_tags,
     )],
     ['  - ', 'lolz'],
     ['  - ', 'widgets @beta'],
