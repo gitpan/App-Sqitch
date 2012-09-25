@@ -42,6 +42,8 @@ lib/App/Sqitch/Plan/LineList.pm
 lib/App/Sqitch/Plan/Pragma.pm
 lib/App/Sqitch/Plan/Tag.pm
 lib/App/Sqitch/X.pm
+lib/LocaleData/de/LC_MESSAGES/App-Sqitch.mo
+lib/LocaleData/fr/LC_MESSAGES/App-Sqitch.mo
 lib/sqitch-add-usage.pod
 lib/sqitch-add.pod
 lib/sqitch-bundle-usage.pod

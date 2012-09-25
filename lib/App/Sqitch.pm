@@ -10,7 +10,7 @@ use Getopt::Long;
 use Hash::Merge qw(merge);
 use Path::Class;
 use Config;
-use Locale::TextDomain qw(1.20 App-Sqitch);
+use Locale::TextDomain 1.20 qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use Moose 2.0300;
 use Encode qw(encode_utf8);
@@ -21,7 +21,7 @@ use Moose::Util::TypeConstraints 2.0300;
 use MooseX::Types::Path::Class 0.05;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.93';
+our $VERSION = '0.931';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -41,7 +41,6 @@ BEGIN {
             unless $_ ~~ [qw(pg sqlite)];
         1;
     };
-
 }
 
 # Okay to loas Sqitch classes now that typess are created.
@@ -428,8 +427,13 @@ sub capture {
 
 sub spool {
     my ($self, $fh) = (shift, shift);
+    my @cmd = $^O eq 'MSWin32' ? do {
+        require Win32::ShellQuote;
+        Win32::ShellQuote::quote_system(@_)
+    } : @_;
+
     local $SIG{__WARN__} = sub { }; # Silence warning.
-    open my $pipe, '|-', @_ or hurl io => __x(
+    open my $pipe, '|-', @cmd or hurl io => __x(
         'Cannot exec {command}: {error}',
         command => $_[0],
         error   => $!,

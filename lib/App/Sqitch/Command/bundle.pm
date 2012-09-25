@@ -15,7 +15,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.93';
+our $VERSION = '0.931';
 
 has from => (
     is       => 'ro',
@@ -79,7 +79,7 @@ has dest_test_dir => (
 
 sub options {
     return qw(
-        dest_dir|dir=s
+        dest-dir|dir=s
         from=s
         to=s
     );

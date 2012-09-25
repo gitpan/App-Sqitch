@@ -28,7 +28,7 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.93",
+  "dist_version" => "0.931",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {},
@@ -50,7 +50,7 @@ my %module_build_args = (
     "IO::Pager" => 0,
     "IPC::System::Simple" => "1.17",
     "List::Util" => 0,
-    "Locale::TextDomain" => 0,
+    "Locale::TextDomain" => "1.20",
     "Moose" => "2.0300",
     "Moose::Meta::Attribute::Native" => "2.0300",
     "Moose::Util::TypeConstraints" => "2.0300",

@@ -15,9 +15,11 @@ sub new {
             Win32API::Net
         );
         $p{requires}{'Win32::Locale'} = 0;
+        $p{requires}{'Win32::ShellQuote'} = 0;
     }
     my $self = $class->SUPER::new(%p);
     $self->add_build_element('etc');
+    $self->add_build_element('mo');
     $self->add_build_element('sql');
     return $self;
 }

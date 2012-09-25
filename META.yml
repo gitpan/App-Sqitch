@@ -18,7 +18,7 @@ build_requires:
 configure_requires:
   Module::Build: 0.35
 dynamic_config: 0
-generated_by: 'Dist::Zilla version 4.300021, CPAN::Meta::Converter version 2.120921'
+generated_by: 'Dist::Zilla version 4.300023, CPAN::Meta::Converter version 2.120921'
 license: mit
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -44,7 +44,7 @@ requires:
   IO::Pager: 0
   IPC::System::Simple: 1.17
   List::Util: 0
-  Locale::TextDomain: 0
+  Locale::TextDomain: 1.20
   Moose: 2.0300
   Moose::Meta::Attribute::Native: 2.0300
   Moose::Util::TypeConstraints: 2.0300
@@ -79,4 +79,4 @@ resources:
   bugtracker: http://github.com/theory/sqitch/issues/
   homepage: http://sqitch.org/
   repository: http://github.com/theory/sqitch/
-version: 0.93
+version: 0.931
