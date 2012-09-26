@@ -21,7 +21,7 @@ use Moose::Util::TypeConstraints 2.0300;
 use MooseX::Types::Path::Class 0.05;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.931';
+our $VERSION = '0.932';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -427,17 +427,23 @@ sub capture {
 
 sub spool {
     my ($self, $fh) = (shift, shift);
-    my @cmd = $^O eq 'MSWin32' ? do {
-        require Win32::ShellQuote;
-        Win32::ShellQuote::quote_system(@_)
-    } : @_;
-
     local $SIG{__WARN__} = sub { }; # Silence warning.
-    open my $pipe, '|-', @cmd or hurl io => __x(
-        'Cannot exec {command}: {error}',
-        command => $_[0],
-        error   => $!,
-    );
+    my $pipe;
+    if ($^O eq 'MSWin32') {
+        require Win32::ShellQuote;
+        open $pipe, '|-', Win32::ShellQuote::quote_system(@_) or hurl io => __x(
+            'Cannot exec {command}: {error}',
+            command => $_[0],
+            error   => $!,
+        );
+    } else {
+        open $pipe, '|-', @_ or hurl io => __x(
+            'Cannot exec {command}: {error}',
+            command => $_[0],
+            error   => $!,
+        );
+    }
+
     local $SIG{PIPE} = sub { die 'spooler pipe broke' };
     print $pipe $_ while <$fh>;
     close $pipe or hurl io => $! ? __x(
