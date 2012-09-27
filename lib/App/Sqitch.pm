@@ -21,7 +21,7 @@ use Moose::Util::TypeConstraints 2.0300;
 use MooseX::Types::Path::Class 0.05;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.932';
+our $VERSION = '0.933';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -431,7 +431,7 @@ sub spool {
     my $pipe;
     if ($^O eq 'MSWin32') {
         require Win32::ShellQuote;
-        open $pipe, '|-', Win32::ShellQuote::quote_system(@_) or hurl io => __x(
+        open $pipe, '|' . Win32::ShellQuote::quote_system(@_) or hurl io => __x(
             'Cannot exec {command}: {error}',
             command => $_[0],
             error   => $!,
