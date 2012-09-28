@@ -21,7 +21,7 @@ use Moose::Util::TypeConstraints 2.0300;
 use MooseX::Types::Path::Class 0.05;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.933';
+our $VERSION = '0.934';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -449,7 +449,7 @@ sub spool {
     close $pipe or hurl io => $! ? __x(
         'Error closing pipe to {command}: {error}',
          command => $_[0],
-         errror  => $!,
+         error   => $!,
     ) : __x(
         '{command} unexpectedly returned exit value {exitval}',
         command => $_[0],

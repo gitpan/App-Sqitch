@@ -1,4 +1,4 @@
-%define cpanversion 0.933
+%define cpanversion 0.934
 Name:           sqitch-pg
 Version:        %(%{__perl} -E 'say sprintf "%.3f", %{cpanversion}')
 Release:        1%{?dist}
@@ -31,6 +31,9 @@ package bundles the Sqith PostgreSQL support.
 %files
 
 %changelog
+* Fri Sep 28 2012 David E. Wheeler <david.wheeler@iovation.com> 0.934-1
+- Upgrade to v0.934.
+
 * Thu Sep 27 2012 David E. Wheeler <david.wheeler@iovation.com> 0.933-1
 - Upgrade to v0.933.
 
