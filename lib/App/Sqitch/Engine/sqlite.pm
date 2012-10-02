@@ -9,7 +9,7 @@ use Moose;
 
 extends 'App::Sqitch::Engine';
 
-our $VERSION = '0.934';
+our $VERSION = '0.935';
 
 has client => (
     is       => 'ro',
@@ -20,7 +20,7 @@ has client => (
         my $sqitch = shift->sqitch;
         $sqitch->db_client
             || $sqitch->config->get( key => 'core.sqlite.client' )
-            || 'sqlite3' . ( $^O eq 'Win32' ? '.exe' : '' );
+            || 'sqlite3' . ( $^O eq 'MSWin32' ? '.exe' : '' );
     },
 );
 

@@ -28,7 +28,7 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.934",
+  "dist_version" => "0.935",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {},

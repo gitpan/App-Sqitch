@@ -8,7 +8,7 @@ use parent 'DateTime';
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 
-our $VERSION = '0.934';
+our $VERSION = '0.935';
 
 sub as_string_formats {
     return qw(
@@ -54,7 +54,7 @@ sub as_string {
             s/\+0000$/-0000/;
         return $rv;
     } else {
-        if ($^O eq 'Win32') {
+        if ($^O eq 'MSWin32') {
             require Win32::Locale;
             $dt->set( locale => Win32::Locale::get_locale() );
         } else {

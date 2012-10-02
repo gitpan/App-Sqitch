@@ -1,4 +1,4 @@
-%define cpanversion 0.934
+%define cpanversion 0.935
 Name:           sqitch-pg
 Version:        %(%{__perl} -E 'say sprintf "%.3f", %{cpanversion}')
 Release:        1%{?dist}
@@ -9,7 +9,7 @@ URL:            http://sqitch.org/
 BuildArch:      noarch
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 Requires:       sqitch >= %{version}
-Requires:       postgresql91
+Requires:       postgresql
 Requires:       perl(DBI)
 Requires:       perl(DBD::Pg)
 
@@ -31,6 +31,9 @@ package bundles the Sqith PostgreSQL support.
 %files
 
 %changelog
+* Tue Oct 2 2012 David E. Wheeler <david.wheeler@iovation.com> 0.935-1
+- Upgrade to v0.935.
+
 * Fri Sep 28 2012 David E. Wheeler <david.wheeler@iovation.com> 0.934-1
 - Upgrade to v0.934.
 

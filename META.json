@@ -4,7 +4,7 @@
       "David E. Wheeler <david@justatheory.com>"
    ],
    "dynamic_config" : 0,
-   "generated_by" : "Dist::Zilla version 4.300023, CPAN::Meta::Converter version 2.120921",
+   "generated_by" : "Dist::Zilla version 4.300024, CPAN::Meta::Converter version 2.120921",
    "license" : [
       "mit"
    ],
@@ -106,6 +106,6 @@
          "url" : "http://github.com/theory/sqitch/"
       }
    },
-   "version" : "0.934"
+   "version" : "0.935"
 }
 
