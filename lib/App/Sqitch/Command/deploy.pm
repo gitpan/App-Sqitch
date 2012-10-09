@@ -10,7 +10,7 @@ use List::Util qw(first);
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.936';
+our $VERSION = '0.937';
 
 has to_target => (
     is  => 'ro',
@@ -51,6 +51,7 @@ sub configure {
     my %params = (
         mode => $opt->{mode} || $config->get( key => 'deploy.mode' ) || 'all',
     );
+    $params{to_target} = $opt->{to_target} if exists $opt->{to_target};
 
     if ( my $vars = $opt->{set} ) {
         # Merge with config.

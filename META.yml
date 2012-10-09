@@ -79,4 +79,4 @@ resources:
   bugtracker: http://github.com/theory/sqitch/issues/
   homepage: http://sqitch.org/
   repository: http://github.com/theory/sqitch/
-version: 0.936
+version: 0.937
