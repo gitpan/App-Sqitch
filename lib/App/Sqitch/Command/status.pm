@@ -1,6 +1,6 @@
 package App::Sqitch::Command::status;
 
-use v5.10.1;
+use 5.010;
 use strict;
 use warnings;
 use utf8;
@@ -14,7 +14,7 @@ use Try::Tiny;
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.935';
+our $VERSION = '0.936';
 
 has show_changes => (
     is      => 'ro',
@@ -122,7 +122,7 @@ sub configure {
     my ( $class, $config, $opt ) = @_;
 
     # Make sure the date format is valid.
-    if (my $format = $opt->{'date-format'}
+    if (my $format = $opt->{date_format}
         || $config->get(key => 'status.date_format')
     ) {
         App::Sqitch::DateTime->validate_as_string_format($format);

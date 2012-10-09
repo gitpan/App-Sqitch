@@ -1,6 +1,6 @@
 package App::Sqitch::Command::help;
 
-use v5.10.1;
+use 5.010;
 use strict;
 use warnings;
 use utf8;
@@ -10,7 +10,7 @@ use Pod::Find;
 use Moose;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.935';
+our $VERSION = '0.936';
 
 # XXX Add --all at some point, to output a list of all possible commands.
 

@@ -1,6 +1,6 @@
 package App::Sqitch::Engine::pg;
 
-use v5.10.1;
+use 5.010;
 use Moose;
 use utf8;
 use Path::Class;
@@ -13,7 +13,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Engine';
 
-our $VERSION = '0.935';
+our $VERSION = '0.936';
 
 has client => (
     is       => 'ro',
@@ -126,6 +126,10 @@ has psql => (
             )
         {
             push @ret, "--$spec->[0]" => $spec->[1] if $spec->[1];
+        }
+
+        if (my %vars = $self->variables) {
+            push @ret => map {; '--set', "$_=$vars{$_}" } sort keys %vars;
         }
 
         push @ret => (

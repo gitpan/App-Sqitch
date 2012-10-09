@@ -3,10 +3,9 @@
 use strict;
 use warnings;
 use utf8;
-use Test::More tests => 124;
+use Test::More tests => 132;
 #use Test::More 'no_plan';
 use App::Sqitch;
-use Test::NoWarnings;
 use Path::Class;
 use Test::Exception;
 use Test::Dir;
@@ -14,6 +13,7 @@ use Test::File qw(file_exists_ok file_not_exists_ok);
 use Test::File::Contents;
 use Locale::TextDomain qw(App-Sqitch);
 use File::Path qw(make_path remove_tree);
+use Test::NoWarnings;
 use lib 't/lib';
 use MockOutput;
 
@@ -260,7 +260,8 @@ file_contents_is $dest,
     '%syntax-version=' . App::Sqitch::Plan::SYNTAX_VERSION . $/
     . '%project=pg' . $/
     . $/
-    . $plan->find('widgets')->as_string . $/,
+    . $plan->find('widgets')->as_string . $/
+    . $plan->find('func/add_user')->as_string . $/,
     'Plan should have written only "widgets"';
 
 # Make sure that --to works.
@@ -292,6 +293,8 @@ my @files = (
     $bundle->dest_revert_dir->file('users.sql'),
     $bundle->dest_deploy_dir->file('widgets.sql'),
     $bundle->dest_revert_dir->file('widgets.sql'),
+    $bundle->dest_deploy_dir->file(qw(func add_user.sql)),
+    $bundle->dest_revert_dir->file(qw(func add_user.sql)),
 );
 file_not_exists_ok $_ for @files;
 ok $sqitch = App::Sqitch->new(
@@ -309,6 +312,7 @@ is_deeply +MockOutput->get_info, [
     [__ 'Writing scripts'],
     ['  + ', 'users @alpha'],
     ['  + ', 'widgets'],
+    ['  + ', 'func/add_user'],
 ], 'Should have change notices';
 
 # Make sure that --from works.
@@ -324,6 +328,7 @@ file_exists_ok $_ for @files[2,3];
 is_deeply +MockOutput->get_info, [
     [__ 'Writing scripts'],
     ['  + ', 'widgets'],
+    ['  + ', 'func/add_user'],
 ], 'Should have only "widets" in change notices';
 
 # Make sure that --to works.
@@ -377,5 +382,6 @@ is_deeply +MockOutput->get_info, [
     [__ 'Writing scripts'],
     ['  + ', 'users @alpha'],
     ['  + ', 'widgets'],
+    ['  + ', 'func/add_user'],
 ], 'Should have all notices';
 

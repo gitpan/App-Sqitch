@@ -1,6 +1,6 @@
 package App::Sqitch::Command::rework;
 
-use v5.10.1;
+use 5.010;
 use strict;
 use warnings;
 use utf8;
@@ -12,7 +12,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.935';
+our $VERSION = '0.936';
 
 has requires => (
     is       => 'ro',
@@ -130,7 +130,8 @@ sub _copy {
         return;
     }
 
-    File::Copy::syscopy $src, $dest or hurl rework => __x(
+    # Stringify to work around bug in File::Copy warning on 5.10.0.
+    File::Copy::syscopy "$src", "$dest" or hurl rework => __x(
         'Cannot copy {src} to {dest}: {error}',
         src   => $src,
         dest  => $dest,

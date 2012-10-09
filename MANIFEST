@@ -7,7 +7,6 @@ META.yml
 README
 README.md
 bin/sqitch
-dist/sqitch-pg.spec
 dist/sqitch.spec
 etc/templates/deploy.tmpl
 etc/templates/revert.tmpl
@@ -98,8 +97,10 @@ t/local.conf
 t/log.t
 t/options.t
 t/pg.t
+t/pg/deploy/func/add_user.sql
 t/pg/deploy/users.sql
 t/pg/deploy/widgets.sql
+t/pg/revert/func/add_user.sql
 t/pg/revert/users.sql
 t/pg/revert/widgets.sql
 t/pg/sqitch.plan

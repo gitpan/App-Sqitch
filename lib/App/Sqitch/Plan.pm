@@ -1,6 +1,6 @@
 package App::Sqitch::Plan;
 
-use v5.10.1;
+use 5.010;
 use utf8;
 use App::Sqitch::DateTime;
 use App::Sqitch::Plan::Tag;
@@ -17,7 +17,7 @@ use namespace::autoclean;
 use Moose;
 use constant SYNTAX_VERSION => '1.0.0-b2';
 
-our $VERSION = '0.935';
+our $VERSION = '0.936';
 
 # Like [:punct:], but excluding _. Copied from perlrecharclass.
 my $punct = q{-!"#$%&'()*+,./:;<=>?@[\\]^`{|}~};

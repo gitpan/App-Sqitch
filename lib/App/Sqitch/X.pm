@@ -1,6 +1,6 @@
 package App::Sqitch::X;
 
-use v5.10.1;
+use 5.010;
 use utf8;
 use Moose;
 use Sub::Exporter::Util ();
@@ -10,7 +10,7 @@ use Role::Identifiable::HasIdent 0.005;
 use Role::Identifiable::HasTags 0.005;
 use overload '""' => 'as_string';
 
-our $VERSION = '0.935';
+our $VERSION = '0.936';
 
 has message => (
     is       => 'ro',

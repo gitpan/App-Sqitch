@@ -74,7 +74,7 @@
             "namespace::autoclean" : "0.11",
             "overload" : "0",
             "parent" : "0",
-            "perl" : "v5.10.1",
+            "perl" : "5.010",
             "strict" : "0",
             "utf8" : "0",
             "warnings" : "0"
@@ -106,6 +106,6 @@
          "url" : "http://github.com/theory/sqitch/"
       }
    },
-   "version" : "0.935"
+   "version" : "0.936"
 }
 

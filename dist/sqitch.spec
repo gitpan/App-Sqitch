@@ -1,4 +1,4 @@
-%define cpanversion 0.935
+%define cpanversion 0.936
 Name:           sqitch
 Version:        %(%{__perl} -E 'say sprintf "%.3f", %{cpanversion}')
 Release:        1%{?dist}
@@ -9,7 +9,7 @@ URL:            http://sqitch.org/
 Source0:        http://www.cpan.org/modules/by-module/App/App-Sqitch-%{cpanversion}.tar.gz
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildArch:      noarch
-BuildRequires:  perl >= 1:v5.10.1
+BuildRequires:  perl >= 1:v5.10.0
 BuildRequires:  perl(Capture::Tiny) >= 0.12
 BuildRequires:  perl(Config)
 BuildRequires:  perl(Config::GitLike) >= 1.09
@@ -153,7 +153,26 @@ rm -rf $RPM_BUILD_ROOT
 %{_bindir}/*
 %{etcdir}/*
 
+%package pg
+Summary:        Sane database change management for PostgreSQL
+Group:          Development/Libraries
+Requires:       sqitch >= %{version}
+Requires:       postgresql
+Requires:       perl(DBI)
+Requires:       perl(DBD::Pg)
+
+%description pg
+Sqitch provides a simple yet robust interface for database change
+management. The philosophy and functionality is inspired by Git. This
+package bundles the Sqitch PostgreSQL support.
+
+%files pg
+# No additional files required.
+
 %changelog
+* Tue Oct 9 2012 David E. Wheeler <david.wheeler@iovation.com> 0.936-1
+- Upgrade to v0.936.
+
 * Tue Oct 2 2012 David E. Wheeler <david.wheeler@iovation.com> 0.935-1
 - Upgrade to v0.935.
 

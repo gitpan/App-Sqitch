@@ -1,6 +1,6 @@
 package App::Sqitch::Command::config;
 
-use v5.10.1;
+use 5.010;
 use strict;
 use warnings;
 use utf8;
@@ -14,7 +14,7 @@ use Moose::Util::TypeConstraints;
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.935';
+our $VERSION = '0.936';
 
 has file => (
     is      => 'ro',
@@ -89,22 +89,22 @@ sub configure {
     $class->usage('Only one config file at a time.') if @file > 1;
 
     # Make sure we have only one type.
-    my @type = grep { $opt->{$_} } qw(bool int num bool-or-int);
+    my @type = grep { $opt->{$_} } qw(bool int num bool_or_int);
     $class->usage('Only one type at a time.') if @type > 1;
 
     # Make sure we are performing only one action.
     my @action = grep { $opt->{$_} } qw(
         get
-        get-all
-        get-regex
+        get_all
+        get_regex
         unset
         list
         edit
         add
-        replace-all
+        replace_all
         unset_all
-        rename-section
-        remove-section
+        rename_section
+        remove_section
     );
     $class->usage('Only one action at a time.') if @action > 1;
 

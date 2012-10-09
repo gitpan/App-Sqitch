@@ -2,7 +2,7 @@ package App::Sqitch;
 
 # ABSTRACT: Sane database change management
 
-use v5.10.1;
+use 5.010;
 use strict;
 use warnings;
 use utf8;
@@ -21,7 +21,7 @@ use Moose::Util::TypeConstraints 2.0300;
 use MooseX::Types::Path::Class 0.05;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.935';
+our $VERSION = '0.936';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -77,6 +77,7 @@ has _engine => (
         );
     }
 );
+
 has engine => (
     is      => 'ro',
     isa     => 'App::Sqitch::Engine',

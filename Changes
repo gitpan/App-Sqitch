@@ -1,5 +1,19 @@
 Revision history for Perl extension App::Sqitch
 
+0.936 2012-10-09T19:11:5Z2
+     - Added `--set` option to the `deploy` and `revert` commands. Useful for
+       setting database client variables for use in scripts. Used by the
+       PostgreSQL engine.
+     - Merged the contents of `dist/sqitch-pg.spec` into a subpackage in
+       `sqitch.spec`. This allows both RPMs are created from a single build
+       process. Simplifies things quite a bit and improves the flexibility for
+       adding other engines in the future.
+     - Reduced required Perl version from 5.10.1 to 5.10.0.
+     - Fixed inconsistent handling of command options with dashes where some
+       were ignored.
+     - The bundle command now properly copies scripts for changes with slashes
+       in their names -- that is, where the scripts are in subdirectories.
+
 0.935 2012-10-02T19:21:05Z
      - Updated `dist/sqitch-pg.spec` to require `postgresql` rather than
        "postgresql91". The version doesn't matter so much.

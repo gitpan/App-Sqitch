@@ -1,6 +1,6 @@
 package App::Sqitch::Command::init;
 
-use v5.10.1;
+use 5.010;
 use strict;
 use warnings;
 use utf8;
@@ -16,7 +16,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.935';
+our $VERSION = '0.936';
 
 sub execute {
     my ( $self, $project ) = @_;

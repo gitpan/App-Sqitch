@@ -1,6 +1,6 @@
 package App::Sqitch::Config;
 
-use v5.10.1;
+use 5.010;
 use Moose;
 use strict;
 use warnings;
@@ -12,7 +12,7 @@ use utf8;
 
 extends 'Config::GitLike';
 
-our $VERSION = '0.935';
+our $VERSION = '0.936';
 
 has '+confname' => ( default => 'sqitch.conf' );
 has '+encoding' => ( default => 'UTF-8' );

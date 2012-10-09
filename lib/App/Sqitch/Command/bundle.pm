@@ -1,6 +1,6 @@
 package App::Sqitch::Command::bundle;
 
-use v5.10.1;
+use 5.010;
 use strict;
 use warnings;
 use utf8;
@@ -15,7 +15,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.935';
+our $VERSION = '0.936';
 
 has from => (
     is       => 'ro',
@@ -148,7 +148,8 @@ sub _copy_if_modified {
         dest   => $dst
     ));
 
-    File::Copy::copy($src, $dst) or hurl bundle => __x(
+    # Stringify to work around bug in File::Copy warning on 5.10.0.
+    File::Copy::copy "$src", "$dst" or hurl bundle => __x(
         'Cannot copy "{source}" to "{dest}": {error}',
         source => $src,
         dest   => $dst,
@@ -217,19 +218,19 @@ sub bundle_scripts {
         if (-e ( my $file = $change->deploy_file )) {
             $self->_copy_if_modified(
                 $file,
-                $self->dest_deploy_dir->file( $file->basename )
+                $self->dest_deploy_dir->file( $change->path_segments )
             );
         }
         if (-e ( my $file = $change->revert_file )) {
             $self->_copy_if_modified(
                 $file,
-                $self->dest_revert_dir->file( $file->basename )
+                $self->dest_revert_dir->file( $change->path_segments )
             );
         }
         if (-e ( my $file = $change->test_file )) {
             $self->_copy_if_modified(
                 $file,
-                $self->dest_test_dir->file( $file->basename )
+                $self->dest_test_dir->file( $change->path_segments )
             );
         }
         $plan->next;

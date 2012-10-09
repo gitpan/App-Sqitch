@@ -1,6 +1,6 @@
 package App::Sqitch::Command::revert;
 
-use v5.10.1;
+use 5.010;
 use strict;
 use warnings;
 use utf8;
@@ -10,22 +10,56 @@ use List::Util qw(first);
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.935';
+our $VERSION = '0.936';
 
 has to_target => (
     is  => 'ro',
     isa => 'Str',
 );
 
+has variables => (
+    is       => 'ro',
+    isa      => 'HashRef',
+    required => 1,
+    lazy     => 1,
+    default  => sub {
+        my $self = shift;
+        return {
+            %{ $self->sqitch->config->get_section( section => 'deploy.variables' ) },
+            %{ $self->sqitch->config->get_section( section => 'revert.variables' ) },
+        };
+    },
+);
+
 sub options {
     return qw(
         to-target|to|target=s
+        set|s=s%
     );
 }
+
+sub configure {
+    my ( $class, $config, $opt ) = @_;
+
+    my %params;
+
+    if ( my $vars = $opt->{set} ) {
+        # Merge with config.
+        $params{variables} = {
+            %{ $config->get_section( section => 'deploy.variables' ) },
+            %{ $config->get_section( section => 'revert.variables' ) },
+            %{ $vars },
+        };
+    }
+
+    return \%params;
+}
+
 
 sub execute {
     my $self   = shift;
     my $engine = $self->sqitch->engine;
+    if (my %v = %{ $self->variables }) { $engine->set_variables(%v) }
     $engine->revert( $self->to_target // shift );
     return $self;
 }
