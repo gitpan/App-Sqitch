@@ -1,12 +1,11 @@
-%define cpanversion 0.937
 Name:           sqitch
-Version:        %(%{__perl} -E 'say sprintf "%.3f", %{cpanversion}')
+Version:        0.938
 Release:        1%{?dist}
 Summary:        Sane database change management
 License:        MIT
 Group:          Development/Libraries
 URL:            http://sqitch.org/
-Source0:        http://www.cpan.org/modules/by-module/App/App-Sqitch-%{cpanversion}.tar.gz
+Source0:        http://www.cpan.org/modules/by-module/App/App-Sqitch-%{version}.tar.gz
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildArch:      noarch
 BuildRequires:  perl >= 1:v5.10.0
@@ -125,7 +124,7 @@ database change management. The philosophy and functionality is inspired by
 Git.
 
 %prep
-%setup -q -n App-Sqitch-%{cpanversion}
+%setup -q -n App-Sqitch-%{version}
 
 %build
 %{__perl} Build.PL installdirs=vendor
@@ -170,11 +169,14 @@ package bundles the Sqitch PostgreSQL support.
 # No additional files required.
 
 %changelog
-* Tue Oct 9 2012 David E. Wheeler <david.wheeler@iovation.com> 0.936-1
-- Upgrade to v0.936.
+* Fri Oct 12 2012 David E. Wheeler <david.wheeler@iovation.com> 0.938-1
+- Upgrade to v0.938.
 
 * Tue Oct 9 2012 David E. Wheeler <david.wheeler@iovation.com> 0.937-1
 - Upgrade to v0.937.
+
+* Tue Oct 9 2012 David E. Wheeler <david.wheeler@iovation.com> 0.936-1
+- Upgrade to v0.936.
 
 * Tue Oct 2 2012 David E. Wheeler <david.wheeler@iovation.com> 0.935-1
 - Upgrade to v0.935.
