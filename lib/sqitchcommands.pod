@@ -47,6 +47,10 @@ Initialize a project
 
 Show change logs for a database.
 
+=item L<C<rebase>|sqitch-rebase>
+
+Revert and redeploy database changes.
+
 =item L<C<revert>|sqitch-revert>
 
 Revert changes from a database
@@ -58,6 +62,10 @@ Duplicate a change in the plan and revise its scripts
 =item L<C<status>|sqitch-status>
 
 Show the current deployment status of a database
+
+=item L<C<show>|sqitch-show>
+
+Show information about changes and tags, or change script contents.
 
 =item L<C<tag>|sqitch-tag>
 

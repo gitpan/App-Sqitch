@@ -12,7 +12,7 @@ use utf8;
 
 extends 'Config::GitLike';
 
-our $VERSION = '0.938';
+our $VERSION = '0.940';
 
 has '+confname' => ( default => 'sqitch.conf' );
 has '+encoding' => ( default => 'UTF-8' );
@@ -58,12 +58,23 @@ sub dir_file { shift->local_file }
 sub get_section {
     my ( $self, %p ) = @_;
     $self->load unless $self->is_loaded;
-    my $section = $p{section} // '';
+    my $section = lc $p{section} // '';
     my $data    = $self->data;
     return {
-        map { $_ => $data->{"$section.$_"} }
+        map  {
+            ( split /[.]/ => $self->initial_key("$section.$_") )[-1],
+            $data->{"$section.$_"}
+        }
         grep { s{^\Q$section.\E([^.]+)$}{$1} } keys %{$data}
     };
+}
+
+# Mock up original_key for older versions fo Config::GitLike.
+eval 'sub original_key { $_[1] }' unless __PACKAGE__->can('original_key');
+
+sub initial_key {
+    my $key = shift->original_key(shift);
+    return ref $key ? $key->[0] : $key;
 }
 
 __PACKAGE__->meta->make_immutable;
@@ -138,6 +149,25 @@ section or subsection.
 =head3 C<add_comment>
 
 Adds a comment to the configuration file.
+
+=head3 C<initial_key>
+
+  my $key = $config->initial_key($data_key);
+
+Given the lowercase key from the loaded data, this method returns it in its
+original case. This is like C<original_key>, only in the case where there are
+multiple keys (for multivalue keys), only the first key is returned.
+
+=begin comment
+
+Hide <original_key>: It is defined in Config::GitLike 1.10, and only defined
+here for older versions.
+
+=head3 C<original_key>
+
+Only provided if not inherited from Config::GitLike.
+
+=end comment
 
 =head1 See Also
 

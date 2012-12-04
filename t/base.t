@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 99;
+use Test::More tests => 144;
 #use Test::More 'no_plan';
 use Test::MockModule;
 use Path::Class;
@@ -39,9 +39,11 @@ can_ok $CLASS, qw(
     top_dir
     deploy_dir
     revert_dir
-    test_dir
+    verify_dir
     extension
     verbosity
+    prompt
+    ask_y_n
 );
 
 ##############################################################################
@@ -65,7 +67,7 @@ is $sqitch->extension, 'sql', 'Default extension should be sql';
 is $sqitch->top_dir, dir(), 'Default top_dir should be .';
 is $sqitch->deploy_dir, dir(qw(deploy)), 'Default deploy_dir should be ./sql/deploy';
 is $sqitch->revert_dir, dir(qw(revert)), 'Default revert_dir should be ./sql/revert';
-is $sqitch->test_dir, dir(qw(test)), 'Default test_dir should be ./sql/test';
+is $sqitch->verify_dir, dir(qw(verify)), 'Default verify_dir should be ./sql/verify';
 isa_ok $sqitch->plan, 'App::Sqitch::Plan';
 ok $sqitch->user_name, 'Default user_name should be set from system';
 is $sqitch->user_email, do {
@@ -304,6 +306,7 @@ is capture_stdout {
     ok $sqitch->spool($fh, $^X, 'read.pl'), 'Spool to read.pl';
 }, $data, 'Data should have been sent to STDOUT by read.pl';
 like capture_stderr {
+    local $ENV{LANGUAGE} = 'en';
     throws_ok { $sqitch->spool($fh, $^X, 'die.pl') }
         'App::Sqitch::X', 'Should get error when die.pl dies';
     is $@->ident, 'io', 'Error ident should be "io"';
@@ -312,9 +315,141 @@ like capture_stderr {
         'The error message should be one of the I/O messages';
 }, qr/OMGWTF/, 'The die script STDERR should have passed through';
 
-throws_ok { $sqitch->spool($fh, '--nosuchscript.ply--') }
-    'App::Sqitch::X', 'Should get an error for a bad command';
+throws_ok {
+    local $ENV{LANGUAGE} = 'en';
+    $sqitch->spool($fh, '--nosuchscript.ply--')
+} 'App::Sqitch::X', 'Should get an error for a bad command';
 is $@->ident, 'io', 'Error ident should be "io"';
 like $@->message,
     qr/\QCannot exec --nosuchscript.ply--:\E|\QError closing pipe to --nosuchscript.ply--:/,
     'Error message should be about inability to exec';
+
+##############################################################################
+# Test prompt().
+throws_ok { $sqitch->prompt } 'App::Sqitch::X',
+    'Should get error for no prompt message';
+is $@->ident, 'DEV', 'No prompt ident should be "DEV"';
+is $@->message, 'prompt() called without a prompt message',
+    'No prompt error message should be correct';
+
+my $sqitch_mock = Test::MockModule->new($CLASS);
+my $input = 'hey';
+$sqitch_mock->mock(_readline => sub { $input });
+my $unattended = 0;
+$sqitch_mock->mock(_is_unattended => sub { $unattended });
+
+is capture_stdout {
+    is $sqitch->prompt('hi'), 'hey', 'Prompt should return input';
+}, 'hi ', 'Prompt should prompt';
+
+$input = 'how';
+is capture_stdout {
+    is $sqitch->prompt('hi', 'blah'), 'how',
+        'Prompt with default should return input';
+}, 'hi [blah] ', 'Prompt should prompt with default';
+$input = 'hi';
+is capture_stdout {
+    is $sqitch->prompt('hi', undef), 'hi',
+        'Prompt with undef default should return input';
+}, 'hi [] ', 'Prompt should prompt with bracket for undef default';
+
+$input = undef;
+is capture_stdout {
+    is $sqitch->prompt('hi', 'yo'), 'yo',
+        'Prompt should return default for undef input';
+}, 'hi [yo] ', 'Prompt should show default when undef input';
+
+$input = '';
+is capture_stdout {
+    is $sqitch->prompt('hi', 'yo'), 'yo',
+        'Prompt should return input for empty input';
+}, 'hi [yo] ', 'Prompt should show default when empty input';
+
+$unattended = 1;
+throws_ok {
+    is capture_stdout { $sqitch->prompt('yo') }, "yo   \n",
+        'Unattended message should be emitted';
+} 'App::Sqitch::X', 'Should get error when uattended and no default';
+is $@->ident, 'io', 'Unattended error ident should be "io"';
+is $@->message, __(
+    'Sqitch seems to be unattended and there is no default value for this question'
+), 'Unattended error message should be correct';
+
+is capture_stdout {
+    is $sqitch->prompt('hi', 'yo'), 'yo', 'Prompt should return input';
+}, "hi [yo] yo\n", 'Prompt should show default as selected when unattended';
+
+##############################################################################
+# Test ask_y_n().
+throws_ok { $sqitch->ask_y_n } 'App::Sqitch::X',
+    'Should get error for no ask_y_n message';
+is $@->ident, 'DEV', 'No ask_y_n ident should be "DEV"';
+is $@->message, 'ask_y_n() called without a prompt message',
+    'No ask_y_n error message should be correct';
+
+throws_ok { $sqitch->ask_y_n('hi', 'b') } 'App::Sqitch::X',
+    'Should get error for invalid ask_y_n default';
+is $@->ident, 'DEV', 'Invalid ask_y_n default ident should be "DEV"';
+is $@->message, 'Invalid default value: ask_y_n() default must be "y" or "n"',
+    'Invalid ask_y_n default error message should be correct';
+
+$input = 'y';
+$unattended = 0;
+is capture_stdout {
+    ok $sqitch->ask_y_n('hi'), 'ask_y_n should return true for "y" input';
+}, 'hi ', 'ask_y_n() should prompt';
+
+$input = 'no';
+is capture_stdout {
+    ok !$sqitch->ask_y_n('howdy'), 'ask_y_n should return false for "no" input';
+}, 'howdy ', 'ask_y_n() should prompt for no';
+
+$input = 'Nein';
+is capture_stdout {
+    ok !$sqitch->ask_y_n('howdy'), 'ask_y_n should return false for "Nein"';
+}, 'howdy ', 'ask_y_n() should prompt for no';
+
+$input = 'Yep';
+is capture_stdout {
+    ok $sqitch->ask_y_n('howdy'), 'ask_y_n should return true for "Yep"';
+}, 'howdy ', 'ask_y_n() should prompt for yes';
+
+$input = '';
+is capture_stdout {
+    ok $sqitch->ask_y_n('whu?', 'y'), 'ask_y_n should return true default "y"';
+}, 'whu? [y] ', 'ask_y_n() should prompt and show default "y"';
+is capture_stdout {
+    ok !$sqitch->ask_y_n('whu?', 'n'), 'ask_y_n should return false default "n"';
+}, 'whu? [n] ', 'ask_y_n() should prompt and show default "n"';
+
+my $please = __ 'Please answer "y" or "n".';
+$input = 'ha!';
+throws_ok {
+    is capture_stdout { $sqitch->ask_y_n('hi')  },
+        "hi  \n$please\nhi  \n$please\nhi  \n",
+         'Should get prompts for repeated bad answers';
+} 'App::Sqitch::X', 'Should get error for bad answers';
+is $@->ident, 'io', 'Bad answers ident should be "IO"';
+is $@->message, __ 'No valid answer after 3 attempts; aborting',
+    'Bad answers message should be correct';
+
+##############################################################################
+# Test _readline.
+$sqitch_mock->unmock('_readline');
+$input = 'hep';
+open my $stdin, '<', \$input;
+*STDIN = $stdin;
+is $sqitch->_readline, $input, '_readline should work';
+
+$unattended = 1;
+is $sqitch->_readline, undef, '_readline should return undef when unattended';
+$sqitch_mock->unmock_all;
+
+##############################################################################
+# Make sure Test::LocaleDomain gives us decoded strings.
+for my $lang (qw(en fr)) {
+    local $ENV{LANGUAGE} = $lang;
+    my $text = __x 'On database {db}', db => 'foo';
+    ok utf8::valid($text), 'Localied string should be valid UTF-8';
+    ok utf8::is_utf8($text), 'Localied string should be decoded';
+}

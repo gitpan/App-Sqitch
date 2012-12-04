@@ -3,7 +3,7 @@ use strict;
 use warnings;
 
 use Module::Build 0.35;
-use lib 'inc'; use Module::Build::Sqitch;
+use lib qw{inc}; use Module::Build::Sqitch;
 
 my %module_build_args = (
   "build_requires" => {
@@ -28,7 +28,7 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.938",
+  "dist_version" => "0.940",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {},
@@ -49,7 +49,9 @@ my %module_build_args = (
     "Hash::Merge" => 0,
     "IO::Pager" => 0,
     "IPC::System::Simple" => "1.17",
+    "List::MoreUtils" => 0,
     "List::Util" => 0,
+    "Locale::Messages" => 0,
     "Locale::TextDomain" => "1.20",
     "Moose" => "2.0300",
     "Moose::Meta::Attribute::Native" => "2.0300",

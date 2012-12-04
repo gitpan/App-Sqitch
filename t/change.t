@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use 5.010;
 use utf8;
-use Test::More tests => 67;
+use Test::More tests => 74;
 #use Test::More 'no_plan';
 use Test::NoWarnings;
 use App::Sqitch;
@@ -31,9 +31,14 @@ $ENV{SQITCH_SYSTEM_CONFIG} = 'nonexistent.sys';
 
 can_ok $CLASS, qw(
     name
+    info
+    id
+    old_info
+    old_id
     lspace
     rspace
     note
+    parent
     since_tag
     suffix
     tags
@@ -41,7 +46,7 @@ can_ok $CLASS, qw(
     plan
     deploy_file
     revert_file
-    test_file
+    verify_file
     requires
     conflicts
     timestamp
@@ -82,8 +87,8 @@ is $change->deploy_file, $sqitch->deploy_dir->file('foo.sql'),
     'The deploy file should be correct';
 is $change->revert_file, $sqitch->revert_dir->file('foo.sql'),
     'The revert file should be correct';
-is $change->test_file, $sqitch->test_dir->file('foo.sql'),
-    'The test file should be correct';
+is $change->verify_file, $sqitch->verify_dir->file('foo.sql'),
+    'The verify file should be correct';
 ok $change->suffix('@foo'), 'Set the suffix';
 is_deeply [ $change->path_segments ], ['foo@foo.sql'],
     'path_segments should now include suffix';
@@ -114,6 +119,20 @@ my $ts = $change->timestamp->as_string;
 is $change->as_string, "foo $ts " . $change->format_planner,
     'should stringify to "foo" + planner';
 is $change->since_tag, undef, 'Since tag should be undef';
+is $change->parent, undef, 'Parent should be undef';
+is $change->old_info, join("\n",
+   'project change',
+   'change foo',
+   'planner ' . $change->format_planner,
+   'date ' . $change->timestamp->as_string,
+), 'Old change info should be correct';
+is $change->old_id, do {
+    my $content = $change->old_info;
+    Digest::SHA1->new->add(
+        'change ' . length($content) . "\0" . $content
+    )->hexdigest;
+},'Old change ID should be correct';
+
 is $change->info, join("\n",
    'project change',
    'change foo',
@@ -155,6 +174,7 @@ ok my $change2 = $CLASS->new(
     name      => 'yo/howdy',
     plan      => $plan,
     since_tag => $tag,
+    parent    => $change,
     lspace    => '  ',
     operator  => '-',
     ropspace  => ' ',
@@ -182,13 +202,30 @@ ok !$change2->is_deploy, 'It should not be a deploy change';
 ok $change2->is_revert, 'It should be a revert change';
 is $change2->action, 'revert', 'It should say so';
 is $change2->since_tag, $tag, 'It should have a since tag';
-is $change2->info, join("\n",
+is $change2->parent, $change, 'It should have a parent';
+is $change2->old_info, join("\n",
    'project change',
    'uri https://github.com/theory/sqitch/',
    'change yo/howdy',
    'planner Barack Obama <potus@whitehouse.gov>',
    'date 2012-07-16T17:25:07Z'
-), 'Info should include since tag';
+), 'Old info should not since tag';
+
+is $change2->info, join("\n",
+   'project change',
+   'uri https://github.com/theory/sqitch/',
+   'change yo/howdy',
+   'parent ' . $change->id,
+   'planner Barack Obama <potus@whitehouse.gov>',
+   'date 2012-07-16T17:25:07Z',
+   'requires',
+   '  + foo',
+   '  + bar',
+   '  + @baz',
+   'conflicts',
+   '  - dr_evil',
+   '', 'blah blah blah'
+), 'Info should include parent and dependencies';
 
 # Check tags.
 is_deeply [$change2->tags], [], 'Should have no tags';
@@ -216,8 +253,8 @@ is $change2->deploy_file, $sqitch->deploy_dir->file(@fn),
     'The deploy file should include the suffix';
 is $change2->revert_file, $sqitch->revert_dir->file(@fn),
     'The revert file should include the suffix';
-is $change2->test_file, $sqitch->test_dir->file(@fn),
-    'The test file should include the suffix';
+is $change2->verify_file, $sqitch->verify_dir->file(@fn),
+    'The verify file should include the suffix';
 
 ##############################################################################
 # Test open_script.
@@ -250,13 +287,13 @@ $fh->close;
 ok $fh = $change2->revert_handle, 'Get revert handle';
 is $fh->getline, "-- revert it, baby\n", 'It should be the revert file';
 
-make_path dir(qw(sql test))->stringify;
-$fh = $change2->test_file->open('>')
-    or die "Cannot open " . $change2->test_file . ": $!\n";
-$fh->say('-- test it, baby');
+make_path dir(qw(sql verify))->stringify;
+$fh = $change2->verify_file->open('>')
+    or die "Cannot open " . $change2->verify_file . ": $!\n";
+$fh->say('-- verify it, baby');
 $fh->close;
-ok $fh = $change2->test_handle, 'Get test handle';
-is $fh->getline, "-- test it, baby\n", 'It should be the test file';
+ok $fh = $change2->verify_handle, 'Get verify handle';
+is $fh->getline, "-- verify it, baby\n", 'It should be the verify file';
 
 ##############################################################################
 # Test the requires/conflicts params.
@@ -287,38 +324,53 @@ ok $change2 = $CLASS->new(
     name => '阱阪阬',
     plan => $plan2,
 ), 'Create change with UTF-8 name';
+is $change2->old_info, join("\n",
+    'project ' . 'multi',
+    'uri '     . $uri->canonical,
+    'change '  . '阱阪阬',
+    'planner ' . $change2->format_planner,
+    'date '    . $change2->timestamp->as_string,
+), 'The name should be decoded text in old info';
+
+is $change2->old_id, do {
+    my $content = Encode::encode_utf8 $change2->old_info;
+    Digest::SHA1->new->add(
+        'change ' . length($content) . "\0" . $content
+    )->hexdigest;
+},'Old change ID should be hashed from encoded UTF-8';
+
 is $change2->info, join("\n",
     'project ' . 'multi',
     'uri '     . $uri->canonical,
     'change '  . '阱阪阬',
     'planner ' . $change2->format_planner,
     'date '    . $change2->timestamp->as_string,
-), 'The name should be decoded text';
+), 'The name should be decoded text in info';
 
 is $change2->id, do {
     my $content = Encode::encode_utf8 $change2->info;
     Digest::SHA1->new->add(
         'change ' . length($content) . "\0" . $content
     )->hexdigest;
-},'Change ID should be hahsed from encoded UTF-8';
+},'Change ID should be hashed from encoded UTF-8';
 
 ##############################################################################
 # Test note_prompt().
 is $change->note_prompt(
     for => 'add',
-    scripts => [$change->deploy_file, $change->revert_file, $change->test_file],
+    scripts => [$change->deploy_file, $change->revert_file, $change->verify_file],
 ), exp_prompt(
     for => 'add',
-    scripts => [$change->deploy_file, $change->revert_file, $change->test_file],
+    scripts => [$change->deploy_file, $change->revert_file, $change->verify_file],
     name    => $change->format_op_name_dependencies,
 ), 'note_prompt() should work';
 
 is $change2->note_prompt(
     for => 'add',
-    scripts => [$change2->deploy_file, $change2->revert_file, $change2->test_file],
+    scripts => [$change2->deploy_file, $change2->revert_file, $change2->verify_file],
 ), exp_prompt(
     for => 'add',
-    scripts => [$change2->deploy_file, $change2->revert_file, $change2->test_file],
+    scripts => [$change2->deploy_file, $change2->revert_file, $change2->verify_file],
     name    => $change2->format_op_name_dependencies,
 ), 'note_prompt() should work';
 

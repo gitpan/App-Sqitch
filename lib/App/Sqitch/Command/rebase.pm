@@ -1,4 +1,4 @@
-package App::Sqitch::Command::revert;
+package App::Sqitch::Command::rebase;
 
 use 5.010;
 use strict;
@@ -12,7 +12,12 @@ extends 'App::Sqitch::Command';
 
 our $VERSION = '0.940';
 
-has to_target => (
+has onto_target => (
+    is  => 'ro',
+    isa => 'Str',
+);
+
+has upto_target => (
     is  => 'ro',
     isa => 'Str',
 );
@@ -22,7 +27,7 @@ has no_prompt => (
     isa => 'Bool'
 );
 
-has variables => (
+has deploy_variables => (
     is       => 'ro',
     isa      => 'HashRef',
     required => 1,
@@ -31,6 +36,19 @@ has variables => (
         my $self = shift;
         return {
             %{ $self->sqitch->config->get_section( section => 'deploy.variables' ) },
+        };
+    },
+);
+
+has revert_variables => (
+    is       => 'ro',
+    isa      => 'HashRef',
+    required => 1,
+    lazy     => 1,
+    default  => sub {
+        my $self = shift;
+        return {
+            %{ $self->deploy_variables },
             %{ $self->sqitch->config->get_section( section => 'revert.variables' ) },
         };
     },
@@ -38,8 +56,11 @@ has variables => (
 
 sub options {
     return qw(
-        to-target|to|target=s
+        onto-target|onto=s
+        upto-target|upto=s
         set|s=s%
+        set-deploy|d=s%
+        set-revert|r=s%
         y
     );
 }
@@ -48,18 +69,50 @@ sub configure {
     my ( $class, $config, $opt ) = @_;
 
     my %params;
-    $params{to_target} = $opt->{to_target} if exists $opt->{to_target};
+    $params{onto_target} = $opt->{onto_target} if exists $opt->{onto_target};
+    $params{upto_target} = $opt->{upto_target} if exists $opt->{upto_target};
 
     if ( my $vars = $opt->{set} ) {
         # Merge with config.
-        $params{variables} = {
+        $params{deploy_variables} = {
             %{ $config->get_section( section => 'deploy.variables' ) },
+            %{ $vars },
+        };
+        $params{revert_variables} = {
+            %{ $params{deploy_variables} },
             %{ $config->get_section( section => 'revert.variables' ) },
             %{ $vars },
         };
     }
 
+    if ( my $vars = $opt->{set_deploy} ) {
+        $params{deploy_variables} = {
+            %{
+                $params{deploy_variables}
+                || $config->get_section( section => 'deploy.variables' )
+            },
+            %{ $vars },
+        };
+    }
+
+    if ( my $vars = $opt->{set_revert} ) {
+        $params{revert_variables} = {
+            %{
+                $params{deploy_variables}
+                || $config->get_section( section => 'deploy.variables' )
+            },
+            %{
+                $params{revert_variables}
+                || $config->get_section( section => 'revert.variables' )
+            },
+            %{ $vars },
+        };
+    }
+
     $params{no_prompt} = delete $opt->{y} // $config->get(
+        key => 'rebase.no_prompt',
+        as  => 'bool',
+    ) // $config->get(
         key => 'revert.no_prompt',
         as  => 'bool',
     ) // 0;
@@ -71,8 +124,10 @@ sub execute {
     my $self   = shift;
     my $engine = $self->sqitch->engine;
     $engine->no_prompt( $self->no_prompt );
-    if (my %v = %{ $self->variables }) { $engine->set_variables(%v) }
-    $engine->revert( $self->to_target // shift );
+    if (my %v = %{ $self->revert_variables }) { $engine->set_variables(%v) }
+    $engine->revert( $self->onto_target // shift );
+    if (my %v = %{ $self->deploy_variables }) { $engine->set_variables(%v) }
+    $engine->deploy( $self->upto_target // shift );
     return $self;
 }
 
@@ -82,17 +137,17 @@ __END__
 
 =head1 Name
 
-App::Sqitch::Command::revert - Revert Sqitch changes from a database
+App::Sqitch::Command::rebase - Revert and redeploy Sqitch changes
 
 =head1 Synopsis
 
-  my $cmd = App::Sqitch::Command::revert->new(%params);
+  my $cmd = App::Sqitch::Command::rebase->new(%params);
   $cmd->execute;
 
 =head1 Description
 
-If you want to know how to use the C<revert> command, you probably want to be
-reading C<sqitch-revert>. But if you really want to know how the C<revert> command
+If you want to know how to use the C<rebase> command, you probably want to be
+reading C<sqitch-rebase>. But if you really want to know how the C<rebase> command
 works, read on.
 
 =head1 Interface
@@ -101,26 +156,26 @@ works, read on.
 
 =head3 C<options>
 
-  my @opts = App::Sqitch::Command::revert->options;
+  my @opts = App::Sqitch::Command::rebase->options;
 
 Returns a list of L<Getopt::Long> option specifications for the command-line
-options for the C<revert> command.
+options for the C<rebase> command.
 
 =head2 Instance Methods
 
 =head3 C<execute>
 
-  $revert->execute;
+  $rebase->execute;
 
-Executes the revert command.
+Executes the rebase command.
 
 =head1 See Also
 
 =over
 
-=item L<sqitch-revert>
+=item L<sqitch-rebase>
 
-Documentation for the C<revert> command to the Sqitch command-line client.
+Documentation for the C<rebase> command to the Sqitch command-line client.
 
 =item L<sqitch>
 

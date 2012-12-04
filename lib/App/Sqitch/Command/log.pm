@@ -22,7 +22,7 @@ BEGIN {
     $ENV{ANSI_COLORS_DISABLED} = 1 unless CAN_OUTPUT_COLOR;
 }
 
-our $VERSION = '0.938';
+our $VERSION = '0.940';
 
 my %FORMATS;
 $FORMATS{raw} = <<EOF;
@@ -272,7 +272,7 @@ has formatter => (
                 },
                 R => sub {
                     return '' unless @{ $_[0]->{requires} };
-                    return __ 'Requires: ' . ' ' . join(
+                    return __ ('Requires: ') . ' ' . join(
                         $_[1] || ', ' => @{ $_[0]->{requires} }
                     ) . "\n";
                 },
@@ -283,7 +283,7 @@ has formatter => (
                 },
                 X => sub {
                     return '' unless @{ $_[0]->{conflicts} };
-                    return __ 'Conflicts:' . ' ' . join(
+                    return __('Conflicts:') . ' ' . join(
                         $_[1] || ', ' => @{ $_[0]->{conflicts} }
                     ) . "\n";
                 },

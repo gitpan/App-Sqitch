@@ -25,23 +25,20 @@ sub items       { @{ shift->{list} } }
 sub change_at   { shift->{list}[shift] }
 sub last_change { return shift->{list}[ -1 ] }
 
-sub _lookup {
-    my ( $self, $key ) = @_;
-    if ($key =~ /\A[@]?((?:LA|FIR)ST)\z/) {
-        my $change = $self->{list}[0] || return undef;
-        my $engine = $change->plan->sqitch->engine;
-        $key = (
-            $1 eq 'LAST'
-                ? $engine->latest_change_id
-                : $engine->earliest_change_id
-        ) || return undef;
-    }
-    return $self->{lookup}{$key};
+# Like [:punct:], but excluding _. Copied from perlrecharclass.
+my $punct = q{-!"#$%&'()*+,./:;<=>?@[\\]^`{|}~};
+
+# XXX Deprecated. Delete dbsymtag when @LAST and @FIRST are removed.
+# Consult 4eb1096c when removing.
+sub _dbsymtag($) {
+    # Return LAST or FIRST if it is a DB symbolic tag.
+    $_[0] =~ /\A[@]?((?:LA|FIR)ST)(?:(?<![$punct])([~^])(?:(\2)|(\d+))?)?\z/ or return;
+    return $1;
 }
 
-sub _offset {
+sub _offset($) {
     # Look for symbolic references.
-    if ( $_[0] =~ s{([~^])(?:(\1)|(\d+))?\z}{} ) {
+    if ( $_[0] =~ s{(?<![$punct])([~^])(?:(\1)|(\d+))?\z}{} ) {
         my $offset = $3 // ($2 ? 2 : 1);
         $offset *= -1 if $1 eq '^';
         return $offset;
@@ -50,11 +47,31 @@ sub _offset {
     }
 }
 
+sub _lookup {
+    my ( $self, $key ) = @_;
+    my $symtag = _dbsymtag $key or return $self->{lookup}{$key};
+    # XXX The rest of this only applies to the deprecated @FIRST & @LAST tags.
+    my $change = $self->{list}[0] || return undef;
+    my $engine = $change->plan->sqitch->engine;
+    my $offset = _offset $key;
+    $key = do {
+        if ($symtag eq 'LAST') {
+            # Nothing comes after the last change.
+            $offset > 0 ? undef : $engine->latest_change_id(abs $offset);
+        } else {
+            # Nothing comes before the first change.
+            $offset < 0 ? undef : $engine->earliest_change_id($offset);
+        }
+    } || return undef;
+
+    return $self->{lookup}{$key};
+}
+
 sub index_of {
     my ( $self, $key ) = @_;
 
-    # Look for symbolic references.
-    if ( my $offset = _offset $key ) {
+    # Look for non-deployed symbolic references.
+    if ( !_dbsymtag($key) && ( my $offset = _offset $key ) ) {
         my $idx = $self->_index_of( $key ) // return undef;
         $idx += $offset;
         return $idx < 0 ? undef : $idx > $#{ $self->{list} } ? undef : $idx;
@@ -99,8 +116,8 @@ sub _index_of {
 sub first_index_of {
     my ( $self, $key, $since ) = @_;
 
-    # Look for symbolic references.
-    if ( my $offset = _offset $key ) {
+    # Look for non-deployed symbolic references.
+    if ( !_dbsymtag $key && ( my $offset = _offset $key ) ) {
         my $idx = $self->_first_index_of( $key, $since ) // return undef;
         $idx += $offset;
         return $idx < 0 ? undef : $idx > $#{ $self->{list} } ? undef : $idx;
@@ -160,11 +177,13 @@ sub append {
         push @{ $list } => $change;
         push @{ $lookup->{ $change->format_name } } => $#$list;
         $lookup->{ $change->id } = my $pos = [$#$list];
+        $lookup->{ $change->old_id } = $pos;
 
         # Index on the tags, too.
         for my $tag ($change->tags) {
             $lookup->{ $tag->format_name } = $pos;
             $lookup->{ $tag->id }          = $pos;
+            $lookup->{ $tag->old_id }      = $pos;
             $self->{last_tagged_at} = $#$list;
         }
     }
@@ -179,7 +198,10 @@ sub index_tag {
     my ( $self, $index, $tag ) = @_;
     my $list   = $self->{list};
     my $lookup = $self->{lookup};
-    $lookup->{ $tag->id } = $lookup->{ $tag->format_name } = [$index];
+    my $pos = [$index];
+    $lookup->{ $tag->id } = $pos;
+    $lookup->{ $tag->old_id } = $pos;
+    $lookup->{ $tag->format_name } = $pos;
     $self->{last_tagged_at} = $index if $index == $#{ $self->{list} };
     return $self;
 }

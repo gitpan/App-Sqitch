@@ -1,5 +1,7 @@
 #!/usr/bin/perl -w
 
+# Add change_id_for
+
 use strict;
 use warnings;
 use 5.010;
@@ -245,8 +247,11 @@ can_ok $CLASS, qw(
     latest_change_id
     is_deployed_tag
     is_deployed_change
+    change_id_for
     change_id_for_depend
     name_for_change_id
+    change_offset_from_id
+    load_change
 );
 
 my @cleanup;
@@ -815,7 +820,7 @@ subtest 'live database' => sub {
             tag        => '@alpha',
             committer_name  => $user2_name,
             committer_email => $user2_email,
-            committed_at => dt_for_tag( $tag->id ),
+            committed_at    => dt_for_tag( $tag->id ),
             planner_name    => $tag->planner_name,
             planner_email   => $tag->planner_email,
             planned_at      => $tag->timestamp,
@@ -858,29 +863,82 @@ subtest 'live database' => sub {
     is_deeply all( $pg->search_events ), \@events, 'Should have 5 events';
 
     ##########################################################################
-    # Test deployed_change_ids() and deployed_change_ids_since().
-    can_ok $pg, qw(deployed_change_ids deployed_change_ids_since);
-    is_deeply [$pg->deployed_change_ids], [$change->id, $change2->id],
-        'Should have two deployed change ID';
-    is_deeply [$pg->deployed_change_ids_since($change)], [$change2->id],
+    # Test deployed_changes(), deployed_changes_since(), load_change, and
+    # change_offset_from_id().
+    can_ok $pg, qw(
+        deployed_changes
+        deployed_changes_since
+        load_change
+        change_offset_from_id
+    );
+    my $change_hash = {
+        id            => $change->id,
+        name          => $change->name,
+        project       => $change->project,
+        note          => $change->note,
+        timestamp     => $change->timestamp,
+        planner_name  => $change->planner_name,
+        planner_email => $change->planner_email,
+        tags          => ['@alpha'],
+    };
+    my $change2_hash = {
+        id            => $change2->id,
+        name          => $change2->name,
+        project       => $change2->project,
+        note          => $change2->note,
+        timestamp     => $change2->timestamp,
+        planner_name  => $change2->planner_name,
+        planner_email => $change2->planner_email,
+        tags          => [],
+    };
+    is_deeply [$pg->deployed_changes], [$change_hash, $change2_hash],
+        'Should have two deployed changes';
+    is_deeply [$pg->deployed_changes_since($change)], [$change2_hash],
         'Should find one deployed since the first one';
-    is_deeply [$pg->deployed_change_ids_since($change2)], [],
+    is_deeply [$pg->deployed_changes_since($change2)], [],
         'Should find none deployed since the second one';
+
+    is_deeply $pg->load_change($change->id), $change_hash,
+        'Should load change 1';
+    is_deeply $pg->load_change($change2->id), $change2_hash,
+        'Should load change 2';
+    is_deeply $pg->load_change('whatever'), undef,
+        'load() should return undef for uknown change ID';
+
+    is_deeply $pg->change_offset_from_id($change->id, undef), $change_hash,
+        'Should load change with no offset';
+    is_deeply $pg->change_offset_from_id($change2->id, 0), $change2_hash,
+        'Should load change with offset 0';
+
+    # Make sure the times are different.
+    $pg->_dbh->do(q{
+        UPDATE changes
+           SET committed_at = committed_at + ?
+         WHERE change_id = ?
+    }, undef, '1s', $change2->id );
+
+    # Now try some offsets.
+    is_deeply $pg->change_offset_from_id($change->id, 1), $change2_hash,
+        'Should find change with offset 1';
+    is_deeply $pg->change_offset_from_id($change2->id, -1), $change_hash,
+        'Should find change with offset -1';
+    is_deeply $pg->change_offset_from_id($change->id, 2), undef,
+        'Should find undef change with offset 2';
 
     # Revert change 2.
     ok $pg->log_revert_change($change2), 'Revert "widgets"';
-    is_deeply [$pg->deployed_change_ids], [$change->id],
+    is_deeply [$pg->deployed_changes], [$change_hash],
         'Should now have one deployed change ID';
-    is_deeply [$pg->deployed_change_ids_since($change)], [],
+    is_deeply [$pg->deployed_changes_since($change)], [],
         'Should find none deployed since that one';
 
     # Add another one.
     ok $pg->log_deploy_change($change2), 'Log another change';
-    is_deeply [$pg->deployed_change_ids], [$change->id, $change2->id],
+    is_deeply [$pg->deployed_changes], [$change_hash, $change2_hash],
         'Should have both deployed change IDs';
-    is_deeply [$pg->deployed_change_ids_since($change)], [$change2->id],
+    is_deeply [$pg->deployed_changes_since($change)], [$change2_hash],
         'Should find only the second after the first';
-    is_deeply [$pg->deployed_change_ids_since($change2)], [],
+    is_deeply [$pg->deployed_changes_since($change2)], [],
         'Should find none after the second';
 
     ok $state = $pg->current_state, 'Get the current state once more';
@@ -1170,10 +1228,10 @@ subtest 'live database' => sub {
         qq{Project regex should fail to match with "nonexistent"};
 
     # Make sure we do not see these changes where we should not.
-    ok !grep( { $_ eq $ext_change->id } $pg->deployed_change_ids),
-        'deployed_change_ids should not include external change';
-    ok !grep( { $_ eq $ext_change->id } $pg->deployed_change_ids_since($change)),
-        'deployed_change_ids_since should not include external change';
+    ok !grep( { $_ eq $ext_change->id } $pg->deployed_changes),
+        'deployed_changes should not include external change';
+    ok !grep( { $_ eq $ext_change->id } $pg->deployed_changes_since($change)),
+        'deployed_changes_since should not include external change';
 
     is $pg->earliest_change_id, $change->id,
         'Earliest change should sill be "users"';
@@ -1212,7 +1270,104 @@ subtest 'live database' => sub {
     }, 'The rest of the state should look right';
 
     ##########################################################################
-    # Test change_id_for_depend.
+    # Test change_id_for().
+    for my $spec (
+        [
+            'change_id only',
+            { change_id => $change->id },
+            $change->id,
+        ],
+        [
+            'change only',
+            { change => $change->name },
+            $change->id,
+        ],
+        [
+            'change + tag',
+            { change => $change->name, tag => 'alpha' },
+            $change->id,
+        ],
+        [
+            'change@HEAD',
+            { change => $change->name, tag => 'HEAD' },
+            $change->id,
+        ],
+        [
+            'tag only',
+            { tag => 'alpha' },
+            $change->id,
+        ],
+        [
+            'ROOT',
+            { tag => 'ROOT' },
+            $change->id,
+        ],
+        [
+            'FIRST',
+            { tag => 'FIRST' },
+            $change->id,
+        ],
+        [
+            'HEAD',
+            { tag => 'HEAD' },
+            $barney->id,
+        ],
+        [
+            'LAST',
+            { tag => 'LAST' },
+            $barney->id,
+        ],
+        [
+            'project:ROOT',
+            { tag => 'ROOT', project => 'groovy' },
+            $ext_change->id,
+        ],
+        [
+            'project:HEAD',
+            { tag => 'HEAD', project => 'groovy' },
+            $ext_change->id,
+        ],
+    ) {
+        my ( $desc, $params, $exp_id ) = @{ $spec };
+        is $pg->change_id_for(%{ $params }), $exp_id, "Should find id for $desc";
+    }
+
+    for my $spec (
+        [
+            'unkonwn id',
+            { change_id => 'whatever' },
+        ],
+        [
+            'unkonwn change',
+            { change => 'whatever' },
+        ],
+        [
+            'unkonwn tag',
+            { tag => 'whatever' },
+        ],
+        [
+            'change + unkonwn tag',
+            { change => $change->name, tag => 'whatever' },
+        ],
+        [
+            'change@ROOT',
+            { change => $change->name, tag => 'ROOT' },
+        ],
+        [
+            'change + different project',
+            { change => $change->name, project => 'whatever' },
+        ],
+        [
+            'tag + different project',
+            { tag => 'alpha', project => 'whatever' },
+        ],
+    ) {
+        my ( $desc, $params ) = @{ $spec };
+        is $pg->change_id_for(%{ $params }), undef, "Should find nothign for $desc";
+    }
+
+    ##########################################################################
+    # Test change_id_for_depend().
     my $id = '4f1e83f409f5f533eeef9d16b8a59e2c0aa91cc1';
     my $i;
 
@@ -1457,18 +1612,93 @@ subtest 'live database' => sub {
     can_ok $pg, qw(begin_work finish_work);
     my $mock_dbh = Test::MockModule->new(ref $pg->_dbh, no_auto => 1);
     my $txn;
-    $mock_dbh->mock(begin_work => sub { $txn = 1 });
-    $mock_dbh->mock(commit     => sub { $txn = 0 });
+    $mock_dbh->mock(begin_work => sub { $txn = 1  });
+    $mock_dbh->mock(commit     => sub { $txn = 0  });
+    $mock_dbh->mock(rollback   => sub { $txn = -1 });
     my @do;
     $mock_dbh->mock(do => sub { shift; @do = @_ });
     ok $pg->begin_work, 'Begin work';
-    ok $txn, 'Should have started a transaction';
+    is $txn, 1, 'Should have started a transaction';
     is_deeply \@do, [
         'LOCK TABLE changes IN EXCLUSIVE MODE',
     ], 'The changes table should have been locked';
     ok $pg->finish_work, 'Finish work';
-    ok !$txn, 'Should have committed a transaction';
+    is $txn, 0, 'Should have committed a transaction';
+    ok $pg->begin_work, 'Begin work again';
+    is $txn, 1, 'Should have started another transaction';
+    ok $pg->rollback_work, 'Rollback work';
+    is $txn, -1, 'Should have rolled back a transaction';
+    $mock_dbh->unmock('do');
+
+    ##########################################################################
+    # Test _update_ids by old ID.
+    my @proj_changes = ($change, $change2, $fred, $barney, $hyper);
+    my @all_changes  = ($change, $change2, $fred, $barney, $ext_change, $ext_change2, $hyper, $ext_change3);
+    my @proj_tags    = ($change->tags, $beta, $gamma);
+    my @all_tags     = (@proj_tags, $ext_tag);
+
+    # Let's just revert and re-deploy them all.
+    ok $pg->log_revert_change($_), 'Revert "' . $_->name . '" change' for reverse @all_changes;
+    ok $pg->log_deploy_change($_), 'Deploy "' . $_->name . '" change' for @all_changes;
+
+    my $upd_change = $pg->_dbh->prepare(
+        'UPDATE changes SET change_id = ? WHERE change_id = ?'
+    );
+    my $upd_tag = $pg->_dbh->prepare(
+        'UPDATE tags SET tag_id = ? WHERE tag_id = ?'
+    );
+
+    for my $change (@proj_changes) {
+        $upd_change->execute($change->old_id, $change->id);
+    }
+    for my $tag (@proj_tags) {
+        $upd_tag->execute($tag->old_id, $tag->id);
+    }
+
+    # Make sure Sqitch has the plan.
+    $mock_sqitch->mock(plan => $plan);
+
+    # Mock Engine to silence the info notice.
+    my $mock_engine = Test::MockModule->new('App::Sqitch::Engine');
+    $mock_engine->mock(_update_ids => sub { shift });
+
+    is $pg->_update_ids, 9, 'Update IDs by old ID should return 9';
+
+    # All of the current project changes should be updated.
+    is_deeply [ map { [@{$_}[0,1]] } @{ all_changes() }],
+        [ map { [ $_->id, $_->name ] } @all_changes ],
+        'All of the change IDs should have been updated';
+
+    # All of the current project tags should be updated.
+    is_deeply [ map { [@{$_}[0,1]] } @{ all_tags() }],
+        [ map { [ $_->id, $_->format_name ] } @all_tags ],
+        'All of the tag IDs should have been updated';
+
+    # Now reset them so they have to be found by name.
+    $i = 0;
+    for my $change (@proj_changes) {
+        $upd_change->execute($change->old_id . $i++, $change->id);
+    }
+    for my $tag (@proj_tags) {
+        $upd_tag->execute($tag->old_id . $i++, $tag->id);
+    }
+
+    is $pg->_update_ids, 9, 'Update IDs by name should also return 9';
+
+    # All of the current project changes should be updated.
+    is_deeply [ map { [@{$_}[0,1]] } @{ all_changes() }],
+        [ map { [ $_->id, $_->name ] } @all_changes ],
+        'All of the change IDs should have been updated by name';
+
+    # All of the current project tags should be updated.
+    is_deeply [ map { [@{$_}[0,1]] } @{ all_tags() }],
+        [ map { [ $_->id, $_->format_name ] } @all_tags ],
+        'All of the tag IDs should have been updated by name';
+
+    # Unmock everything and call it a day.
     $mock_dbh->unmock_all;
+    $mock_sqitch->unmock_all;
+    $mock_engine->unmock_all;
     done_testing;
 };
 

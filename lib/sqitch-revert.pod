@@ -30,7 +30,9 @@ a suggestion to instead use L<sqitch-deploy>.
 
 =item C<--to>
 
-Specify the reversion target. Defaults to reverting all changes.
+Specify the reversion target. Defaults to reverting all changes. See
+L<sqitchchanges> for the various ways in which change targets can be
+specified.
 
 =item C<-s>
 
@@ -40,6 +42,10 @@ Set a variable name and value for use by the database engine client, if it
 supports variables. The format must be C<name=value>, e.g., C<--set
 defuser='Homer Simpson'>. Overrides any values loaded from the
 C<deploy.variables> or C<revert.variables> configurations.
+
+=item C<-y>
+
+Disable the prompt that normally asks whether or not to execute the revert.
 
 =back
 
@@ -57,8 +63,13 @@ assumption that the values will generally be the same. If they're not, use
 C<revert.variables> to override C<deploy.variables>.
 
 These variables are Useful if your database engine supports variables in
-scripts, such as PostgreSQL's L<C<psql>
-variables|http://www.postgresql.org/docs/9.2/static/app-psql.html#APP-PSQL-INTERPOLATION>.
+scripts, such as PostgreSQL's
+L<C<psql> variables|http://www.postgresql.org/docs/current/static/app-psql.html#APP-PSQL-INTERPOLATION>.
+
+=item C<[revert.no_prompt]>
+
+A boolean value indicating whether or not to disable the prompt before
+executing the revert. My be overridden by C<-y>.
 
 =back
 

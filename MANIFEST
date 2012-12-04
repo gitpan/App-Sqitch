@@ -10,7 +10,7 @@ bin/sqitch
 dist/sqitch.spec
 etc/templates/deploy.tmpl
 etc/templates/revert.tmpl
-etc/templates/test.tmpl
+etc/templates/verify.tmpl
 inc/Module/Build/Sqitch.pm
 lib/App/Sqitch.pm
 lib/App/Sqitch/Command.pm
@@ -21,8 +21,10 @@ lib/App/Sqitch/Command/deploy.pm
 lib/App/Sqitch/Command/help.pm
 lib/App/Sqitch/Command/init.pm
 lib/App/Sqitch/Command/log.pm
+lib/App/Sqitch/Command/rebase.pm
 lib/App/Sqitch/Command/revert.pm
 lib/App/Sqitch/Command/rework.pm
+lib/App/Sqitch/Command/show.pm
 lib/App/Sqitch/Command/status.pm
 lib/App/Sqitch/Command/tag.pm
 lib/App/Sqitch/Config.pm
@@ -57,10 +59,14 @@ lib/sqitch-init-usage.pod
 lib/sqitch-init.pod
 lib/sqitch-log-usage.pod
 lib/sqitch-log.pod
+lib/sqitch-rebase-usage.pod
+lib/sqitch-rebase.pod
 lib/sqitch-revert-usage.pod
 lib/sqitch-revert.pod
 lib/sqitch-rework-usage.pod
 lib/sqitch-rework.pod
+lib/sqitch-show-usage.pod
+lib/sqitch-show.pod
 lib/sqitch-status-usage.pod
 lib/sqitch-status.pod
 lib/sqitch-tag-usage.pod
@@ -121,8 +127,10 @@ t/pod-coverage.t
 t/pod.t
 t/pragma.t
 t/read.pl
+t/rebase.t
 t/revert.t
 t/rework.t
+t/show.t
 t/sqitch
 t/sqitch.conf
 t/sql/deploy/roles.sql

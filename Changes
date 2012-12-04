@@ -1,5 +1,62 @@
 Revision history for Perl extension App::Sqitch
 
+0.940  2012-12-04T05:49:45Z
+     - Fixed tests that failed due to I18N issues, with thanks to Arnaud
+       (Arhuman) ASSAD!
+     - Localized messages are now properly encoded in UTF-8. Thanks to Ronan
+       Dunklau for the report (issue #46) and to Guido Flohr for details on
+       how to address the issue.
+     - The variables defined for the `add`, `deploy`, and `revert` commands
+       now have the case of there names preserved if Config::GitLike 1.10 or
+       later is installed. Thanks to Ronan Dunklau for the report (issue #48)
+       and to Alex Vandiver for the case-preserving update to Config::GitLike.
+     - Attempting to run `sqitch` with no command now outputs the list of
+       supported commands (`sqitchcommands`), rather than the list of core
+       options. Thanks to BryLo for the suggestion.
+     - Changed the plan parser so that it no longer changes the order of
+       changes based on the dependency graph. Unfortunately, this meant that
+       the order could change from one run to another, especially if new
+       changes were added since the last deploy. The planner now throws an
+       exception if the order in the plan is wrong, and suggests that the user
+       move changes in the plan file to get it to work properly.
+     - Fixed bug where the `core.plan_file` configuration variable was
+       ignored.
+     - Improved error handling when deploying and reverting a change. If the
+       change successfully deployed but the logging of the deployment to the
+       database failed, there was just a rollback message. Sqitch will now
+       emit the underlying error *and* run the revert script for the
+       just-deployed change.
+     - Modified the text hashed for change and tag IDs. Both now include the
+       note, if present, the ID of the preceding change, and the list of
+       dependencies. The result is that, when a change is modified or moved in
+       the plan, it gets a new ID ID. The upshot is that things *must* be in
+       order for a deploy to succeed. Existing deployments will automatically
+       have their IDs updated by the `deploy` command.
+     - Changed the `revert` command so that it *only* fetches information about
+       changes to be reverted from the database, rather than the plan.
+     - Deprecated the `@LAST` and `@FIRST` symbolic tags. With `revert` now
+       fetching change information from the database, there is no longer a
+       need to specify that changes be found in the database. It's possible
+       some other way to search database changes will be added in the future,
+       but if so, it will be less limiting than `@LAST` and `@FIRST`, because
+       it will likely allow searches by literal tags.
+     - Added the `rebase` command. This command combines a `revert` and a
+       `deploy` into a single command, which should allow for more natural
+       deployment testing during development. `sqitch rebase @HEAD^` should
+       become a common command for database developers.
+     - Duplicate values passed via `--requires` and `--conflicts` in the `add`
+       and `rework` actions are now ignored.
+     - The `add` command now throws an exception if `--template-directory` is
+       passed or specified in the configuration file, and the specified
+       directory does not exist or is not a directory. Thanks to Ronan Dunklau
+       for the report! (Issue #52).
+     - The `revert` command now prompts for confirmation before reverting
+       anything. The prompt can be skipped via the `-y` option or setting the
+       `revert.no_prompt` configuration variable. Works for rebase, too, which
+       reads `rebase.no_prompt` before `revert.no_prompt`.' (Issue #49.)
+     - Added the `show` command, which show information about changes or tags,
+       or the contents of change script files. (Issue #57.)
+
 0.938 2012-10-12T19:16:57Z
      - Added a primary key to the PostgreSQL `events` table, which should make
        it easier to support replication.

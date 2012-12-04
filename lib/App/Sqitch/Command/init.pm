@@ -16,7 +16,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.938';
+our $VERSION = '0.940';
 
 sub execute {
     my ( $self, $project ) = @_;
@@ -65,7 +65,7 @@ sub configure {
 sub make_directories {
     my $self   = shift;
     my $sqitch = $self->sqitch;
-    for my $attr (qw(deploy_dir revert_dir test_dir)) {
+    for my $attr (qw(deploy_dir revert_dir verify_dir)) {
         $self->_mkdir( $sqitch->$attr );
     }
     return $self;
@@ -149,7 +149,7 @@ sub write_config {
         top_dir
         deploy_dir
         revert_dir
-        test_dir
+        verify_dir
         extension
     )) {
 

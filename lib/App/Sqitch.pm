@@ -11,6 +11,7 @@ use Hash::Merge qw(merge);
 use Path::Class;
 use Config;
 use Locale::TextDomain 1.20 qw(App-Sqitch);
+use Locale::Messages qw(bind_textdomain_filter);
 use App::Sqitch::X qw(hurl);
 use Moose 2.0300;
 use Encode qw(encode_utf8);
@@ -21,7 +22,7 @@ use Moose::Util::TypeConstraints 2.0300;
 use MooseX::Types::Path::Class 0.05;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.938';
+our $VERSION = '0.940';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -41,6 +42,10 @@ BEGIN {
             unless $_ ~~ [qw(pg sqlite)];
         1;
     };
+
+    # Force Locale::TextDomain to encode in UTF-8 and to decode all messages.
+    $ENV{OUTPUT_CHARSET} = 'UTF-8';
+    bind_textdomain_filter 'App-Sqitch' => \&Encode::decode_utf8;
 }
 
 # Okay to loas Sqitch classes now that typess are created.
@@ -53,7 +58,11 @@ has plan_file => (
     required => 1,
     lazy     => 1,
     default  => sub {
-        shift->top_dir->file('sqitch.plan')->cleanup;
+        my $self = shift;
+        if ( my $fn = $self->config->get( key => 'core.plan_file') ) {
+            return file $fn;
+        }
+        return $self->top_dir->file('sqitch.plan')->cleanup;
     }
 );
 
@@ -135,17 +144,17 @@ has revert_dir => (
     },
 );
 
-has test_dir => (
+has verify_dir => (
     is       => 'ro',
     isa      => 'Path::Class::Dir',
     required => 1,
     lazy     => 1,
     default  => sub {
         my $self = shift;
-        if ( my $dir = $self->config->get( key => 'core.test_dir' ) ) {
+        if ( my $dir = $self->config->get( key => 'core.verify_dir' ) ) {
             return dir $dir;
         }
-        $self->top_dir->subdir('test')->cleanup;
+        $self->top_dir->subdir('verify')->cleanup;
     },
 );
 
@@ -271,16 +280,19 @@ sub go {
     # 2. Parse core options.
     my $opts = $class->_parse_core_opts($core_args);
 
-    # 3. Load config.
+    # 3. If there is no command, emit help that lists commands.
+    $class->_pod2usage('sqitchcommands') unless $cmd;
+
+    # 4. Load config.
     my $config = App::Sqitch::Config->new;
 
-    # 4. Instantiate Sqitch.
+    # 5. Instantiate Sqitch.
     $opts->{_engine} = delete $opts->{engine} if $opts->{engine};
     $opts->{config} = $config;
     my $sqitch = $class->new($opts);
 
     return try {
-        # 5. Instantiate the command object.
+        # 6. Instantiate the command object.
         my $command = App::Sqitch::Command->load({
             sqitch  => $sqitch,
             command => $cmd,
@@ -288,7 +300,7 @@ sub go {
             args    => $cmd_args,
         });
 
-        # 6. Execute command.
+        # 7. Execute command.
         $command->execute( @{$cmd_args} ) ? 0 : 2;
     } catch {
         # Just bail for unknown exceptions.
@@ -318,7 +330,7 @@ sub _core_opts {
         top-dir|dir=s
         deploy-dir=s
         revert-dir=s
-        test-dir=s
+        verify-dir|test-dir=s
         extension=s
         etc-path
         quiet
@@ -387,7 +399,7 @@ sub _parse_core_opts {
     }
 
     # Convert files and dirs to objects.
-    for my $dir (qw(top_dir deploy_dir revert_dir test_dir)) {
+    for my $dir (qw(top_dir deploy_dir revert_dir verify_dir)) {
         $opts{$dir} = dir $opts{$dir} if defined $opts{$dir};
     }
     $opts{plan_file} = file $opts{plan_file} if defined $opts{plan_file};
@@ -424,6 +436,76 @@ sub capture {
         die $msg;
     };
     capturex @_;
+}
+
+sub _is_interactive {
+  return -t STDIN && (-t STDOUT || !(-f STDOUT || -c STDOUT)) ;   # Pipe?
+}
+
+sub _is_unattended {
+    my $self = shift;
+    return !$self->_is_interactive && eof STDIN;
+}
+
+sub _readline {
+    my $self = shift;
+    return undef if $self->_is_unattended;
+    my $answer = <STDIN>;
+    chomp $answer if defined $answer;
+    return $answer;
+}
+
+sub prompt {
+    my $self = shift;
+    my $msg  = shift or hurl 'prompt() called without a prompt message';
+
+    # use a list to distinguish a default of undef() from no default
+    my @def;
+    @def = (shift) if @_;
+    # use dispdef for output
+    my @dispdef = scalar(@def)
+        ? ('[', (defined($def[0]) ? $def[0] : ''), '] ')
+        : ('', '');
+
+    # Don't use emit because it adds a newline.
+    local $|=1;
+    print $msg, ' ', @dispdef;
+
+    if ($self->_is_unattended) {
+        hurl io => __(
+            'Sqitch seems to be unattended and there is no default value for this question'
+        ) unless @def;
+        print "$dispdef[1]\n";
+    }
+
+    my $ans = $self->_readline;
+
+    if ( !defined $ans or !length $ans ) {
+        # Ctrl-D or user hit return;
+        $ans = @def ? $def[0] : '';
+    }
+
+    return $ans;
+}
+
+sub ask_y_n {
+    my $self = shift;
+    my ($msg, $def)  = @_;
+
+    hurl 'ask_y_n() called without a prompt message' unless $msg;
+    hurl 'Invalid default value: ask_y_n() default must be "y" or "n"'
+        if $def && $def !~ /^[yn]/i;
+
+    my $answer;
+    my $i = 3;
+    while ($i--) {
+        $answer = $self->prompt(@_);
+        return 1 if $answer =~ /^y/i;
+        return 0 if $answer =~ /^n/i;
+        $self->emit(__ 'Please answer "y" or "n".');
+    }
+
+    hurl io => __ 'No valid answer after 3 attempts; aborting';
 }
 
 sub spool {
@@ -487,37 +569,42 @@ sub page {
 
 sub trace {
     my $self = shift;
-    say _prepend 'trace:', @_ if $self->verbosity > 2;
+    $self->emit( _prepend 'trace:', @_ ) if $self->verbosity > 2;
 }
 
 sub debug {
     my $self = shift;
-    say _prepend 'debug:', @_ if $self->verbosity > 1;
+    $self->emit( _prepend 'debug:', @_ ) if $self->verbosity > 1;
 }
 
 sub info {
     my $self = shift;
-    say @_ if $self->verbosity;
+    $self->emit(@_) if $self->verbosity;
 }
 
 sub comment {
     my $self = shift;
-    say _prepend '#', @_;
+    $self->emit( _prepend '#', @_ );
 }
 
 sub emit {
     shift;
+    local $|=1;
     say @_;
 }
 
 sub vent {
     shift;
+    my $fh = select;
+    select STDERR;
+    local $|=1;
     say STDERR @_;
+    select $fh;
 }
 
 sub warn {
     my $self = shift;
-    say STDERR _prepend 'warning:', @_;
+    $self->vent(_prepend 'warning:', @_);
 }
 
 __PACKAGE__->meta->make_immutable;
@@ -588,7 +675,7 @@ Constructs and returns a new Sqitch object. The supported parameters include:
 
 =item C<revert_dir>
 
-=item C<test_dir>
+=item C<verify_dir>
 
 =item C<extension>
 
@@ -624,7 +711,7 @@ Constructs and returns a new Sqitch object. The supported parameters include:
 
 =head3 C<revert_dir>
 
-=head3 C<test_dir>
+=head3 C<verify_dir>
 
 =head3 C<extension>
 
@@ -739,6 +826,27 @@ log:
 Send a warning messages to C<STDERR>. Warnings will have C<warning: > prefixed
 to every line. Use if something unexpected happened but you can recover from
 it.
+
+=head3 C<prompt>
+
+  my $ans = $sqitch->('Why would you want to do this?', 'because');
+
+Prompts the user for input and returns that input. Pass in an optional default
+value for the user to accept or to be used if Sqitch is running unattended. An
+exception will be thrown if there is no prompt message or if Sqitch is
+unattended and there is no default value.
+
+=head3 C<ask_y_n>
+
+  if ( $sqitch->ask_y_no('Are you sure?', 'y') ) { # do it! }
+
+Prompts the user with a "yes" or "no" question. Returns true for "yes" and
+false for "no". Any answer that begins with case-insensitive "y" or "n" will
+be accepted as valid. If the user inputs an invalid value three times, an
+exception will be thrown. An exception will also be thrown if there is no
+message or if the optional default value does not begin with "y" or "n". As
+with C<prompt()> an exception will be thrown if Sqitch is running unattended
+and there is no default.
 
 =head1 Author
 

@@ -13,11 +13,12 @@ use App::Sqitch::Plan::ChangeList;
 use App::Sqitch::Plan::LineList;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
+use List::MoreUtils qw(uniq);
 use namespace::autoclean;
 use Moose;
 use constant SYNTAX_VERSION => '1.0.0-b2';
 
-our $VERSION = '0.938';
+our $VERSION = '0.940';
 
 # Like [:punct:], but excluding _. Copied from perlrecharclass.
 my $punct = q{-!"#$%&'()*+,./:;<=>?@[\\]^`{|}~};
@@ -34,6 +35,7 @@ my $name_re = qr{
     (?<![$punct])\b                # last character isn't punctuation
 }x;
 
+# XXX FIRST & LAST deprecated. Remove at some point?
 my %reserved = map { $_ => undef } qw(ROOT HEAD FIRST LAST);
 
 sub name_regex { $name_re }
@@ -354,7 +356,7 @@ sub _parse {
 
             if (@curr_changes) {
                 # Sort all changes up to this tag by their dependencies.
-                push @changes => $self->sort_changes(
+                push @changes => $self->check_changes(
                     $pragmas{project},
                     \%line_no_for,
                     @curr_changes,
@@ -411,7 +413,8 @@ sub _parse {
             $tag_changes{ $params{name} } = $fh->input_line_number;
             push @curr_changes => $prev_change = App::Sqitch::Plan::Change->new(
                 plan => $self,
-                ( $prev_tag ? ( since_tag => $prev_tag ) : () ),
+                ( $prev_tag    ? ( since_tag => $prev_tag    ) : () ),
+                ( $prev_change ? ( parent    => $prev_change ) : () ),
                 %params,
             );
             push @lines => $prev_change;
@@ -425,7 +428,7 @@ sub _parse {
     }
 
     # Sort and store any remaining changes.
-    push @changes => $self->sort_changes(
+    push @changes => $self->check_changes(
         $pragmas{project},
         \%line_no_for,
         @curr_changes,
@@ -447,21 +450,16 @@ sub _version_line {
     );
 }
 
-sub sort_changes {
+sub check_changes {
     my ( $self, $proj ) = ( shift, shift );
     my $seen = ref $_[0] eq 'HASH' ? shift : {};
 
-    my %obj;             # maps change names to objects.
-    my %pairs;           # all pairs ($l, $r)
-    my %npred;           # number of predecessors
-    my %succ;            # list of successors
-    for my $change (@_) {
+    my %position;
+    my @invalid;
 
-        # Stolen from http://cpansearch.perl.org/src/CWEST/ppt-0.14/bin/tsort.
-        my $name = $change->name;
-        $obj{$name} = $change;
-        my $p = $pairs{$name} = {};
-        $npred{$name} += 0;
+    my $i = 0;
+    for my $change (@_) {
+        my @bad;
 
         # XXX Ignoring conflicts for now.
         for my $dep ( $change->requires ) {
@@ -485,47 +483,75 @@ sub sort_changes {
                     }
                 }
             } else {
-                next if exists $seen->{$key};
+                # Skip it if we've already seen it in the plan.
+                next if exists $seen->{$key} || $position{$key};
             }
 
-            $p->{$key}++;
-            $npred{$key}++;
-            push @{ $succ{$name} } => $key;
+            # Hrm, unknown dependency.
+            push @bad, $key;
         }
+        $position{$change->name} = ++$i;
+        push @invalid, [ $change->name => \@bad ] if @bad;
     }
 
-    # Stolen from http://cpansearch.perl.org/src/CWEST/ppt-0.14/bin/tsort.
-    # Create a list of changes without predecessors
-    my @list = grep { !$npred{$_->name} } @_;
 
-    my @ret;
-    while (@list) {
-        my $change = pop @list;
-        unshift @ret => $change;
-        foreach my $child ( @{ $succ{$change->name} } ) {
-            unless ( $pairs{$child} ) {
-                my $sqitch = $self->sqitch;
-                my $name = $change->name;
-                hurl plan => __x(
+    # Nothing bad, then go!
+    return @_ unless @invalid;
+
+    # Build up all of the error messages.
+    my @errors;
+    for my $bad (@invalid) {
+        my $change = $bad->[0];
+        my $max_delta = 0;
+        for my $dep (@{ $bad->[1] }) {
+            if ($change eq $dep) {
+                push @errors => __x(
+                    'Change "{change}" cannot require itself',
+                    change => $change,
+                );
+            } elsif (my $pos = $position{ $dep }) {
+                my $delta = $pos - $position{$change};
+                $max_delta = $delta if $delta > $max_delta;
+                push @errors => __xn(
+                    'Change "{change}" planned {num} change before required change "{required}"',
+                    'Change "{change}" planned {num} changes before required change "{required}"',
+                    $delta,
+                    change   => $change,
+                    required => $dep,
+                    num      => $delta,
+                );
+            } else {
+                push @errors => __x(
                     'Unknown change "{required}" required by change "{change}"',
-                    required => $child,
-                    change   => $name,
+                    required => $dep,
+                    change   => $change,
                 );
             }
-            push @list, $obj{$child} unless --$npred{$child};
+        }
+        if ($max_delta) {
+            # Suggest that the change be moved.
+            # XXX Potentially offer to move it and rewrite the plan.
+            $errors[-1] .= "\n    " .  __xn(
+                'HINT: move "{change}" down {num} line in {plan}',
+                'HINT: move "{change}" down {num} lines in {plan}',
+                $max_delta,
+                change => $change,
+                num    => $max_delta,
+                plan   => $self->sqitch->plan_file,
+            );
         }
     }
 
-    if ( my @cycles = map { $_->name } grep { $npred{$_->name} } @_ ) {
-        my $last = pop @cycles;
-        hurl plan => __x(
-            'Dependency cycle detected beween changes {changes}',
-            changes => join( __ ', ', map {
-                __x('"{quoted}"', quoted => $_)
-            } @cycles) . __ ' and ' . __x('"{quoted}"', quoted => $last)
-        );
-    }
-    return @ret;
+    # Throw the exception with all of the errors.
+    hurl plan => join(
+        "\n  ",
+        __n(
+            'Dependency error detected:',
+            'Dependency errors detected:',
+            @errors
+        ),
+        @errors,
+    );
 }
 
 sub open_script {
@@ -644,7 +670,7 @@ sub _parse_deps {
             plan      => $self,
             conflicts => 0,
         );
-    } @{ $p->{requires} } ] if $p->{requires};
+    } uniq @{ $p->{requires} } ] if $p->{requires};
 
     $p->{conflicts} = [ map {
         my $p = App::Sqitch::Plan::Depend->parse("!$_") // hurl plan => __x(
@@ -656,7 +682,7 @@ sub _parse_deps {
             plan      => $self,
             conflicts => 1,
         );
-    } @{ $p->{conflicts} } ] if $p->{conflicts};
+    } uniq @{ $p->{conflicts} } ] if $p->{conflicts};
 }
 
 sub add {
@@ -740,8 +766,6 @@ sub _check_dependencies {
     my $changes = $self->_changes;
     my $project = $self->project;
     for my $req ( $change->requires ) {
-        # use Test::More; diag $req->key_name;
-        # diag $req->project, ' ne ', $project;
         next if $req->project ne $project;
         $req = $req->key_name;
         next if defined $changes->index_of($req =~ /@/ ? $req : $req . '@HEAD');
@@ -987,10 +1011,10 @@ The named change as it was last seen in the list before the specified tag.
 =head3 C<get>
 
   my $change = $plan->get('6c2f28d125aff1deea615f8de774599acf39a7a1');
-  my $foo  = $plan->index_of('@foo');
-  my $bar  = $plan->index_of('bar');
-  my $bar1 = $plan->index_of('bar@alpha')
-  my $bar2 = $plan->index_of('bar@HEAD');
+  my $foo    = $plan->get('@foo');
+  my $bar    = $plan->get('bar');
+  my $bar1   = $plan->get('bar@alpha')
+  my $bar2   = $plan->get('bar@HEAD');
 
 Returns the change corresponding to the specified ID or name. The argument may
 be in any of the formats described for C<index_of()>.
@@ -998,10 +1022,10 @@ be in any of the formats described for C<index_of()>.
 =head3 C<find>
 
   my $change = $plan->find('6c2f28d125aff1deea615f8de774599acf39a7a1');
-  my $foo  = $plan->index_of('@foo');
-  my $bar  = $plan->index_of('bar');
-  my $bar1 = $plan->index_of('bar@alpha')
-  my $bar2 = $plan->index_of('bar@HEAD');
+  my $foo    = $plan->find('@foo');
+  my $bar    = $plan->find('bar');
+  my $bar1   = $plan->find('bar@alpha')
+  my $bar2   = $plan->find('bar@HEAD');
 
 Finds the change corresponding to the specified ID or name. The argument may be
 in any of the formats described for C<index_of()>. Unlike C<get()>, C<find()>
@@ -1153,15 +1177,15 @@ Loads the plan data. Called internally, not meant to be called directly, as it
 parses the plan file and deploy scripts every time it's called. If you want
 the all of the changes, call C<changes()> instead.
 
-=head3 C<sort_changes>
+=head3 C<check_changes>
 
-  @changes = $plan->sort_changes( $project, @changes );
-  @changes = $plan->sort_changes( $project, { '@foo' => 1 }, @changes );
+  @changes = $plan->check_changes( $project, @changes );
+  @changes = $plan->check_changes( $project, { '@foo' => 1 }, @changes );
 
-Sorts a list of changes in dependency order and returns them. If the second
-argument is a hash reference, its keys should be previously-seen change and
-tag names that can be assumed to be satisfied requirements for the succeeding
-changes.
+Checks a list of changes to validate their dependencies and returns them. If
+the second argument is a hash reference, its keys should be previously-seen
+change and tag names that can be assumed to be satisfied requirements for the
+succeeding changes.
 
 =head3 C<tag>
 
