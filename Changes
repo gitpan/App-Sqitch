@@ -1,5 +1,41 @@
 Revision history for Perl extension App::Sqitch
 
+0.950  2013-01-03T23:09:42Z
+     - Fixed the "Name" header in `sqitch-rebase` so that it will actually
+       show up on the CPAN search sites.
+     - Fixed test failure triggered by the passage of time in `t/engine.t`.
+     - At the start of a `deploy`, if the most recently deployed change has
+       any unlogged tags (that is, tags added since the last `deploy`), they
+       will be logged before the `deploy` continues (issue #60).
+     - Added the `--no-log` option to `deploy`, `revert`, and `rebase`. This
+       causes the changes to be logged as deployed without actually running
+       the deploy scripts. Useful for an existing database that is being
+       converted to Sqitch, and you need to log changes as deployed because
+       they have been deployed by other means in the past.
+     - Now check that dependencies are required for all changes to be deployed
+       or reverted before deploying or reverting anything, rather than
+       checking dependencies for each change just before deploying or reverting
+       it. This allows a or revert deploy to fail sooner, with no database
+       changes, when dependencies are not met.
+     - The `deploy` command now check that no changes its about to deploy are
+       already deployed.
+     - Added `--mode` to the `rebase` command.
+     - Added the `--verify` option to `deploy` and `rebase`. Specify this
+       option to run the verify script, if it exists, for each change after it
+       is deployed. If the verify script dies, the deploy will be considered a
+       failure and the requisite reversion (as specified for `--mode`) will
+       begin.
+     - Added the `verify` command, which verifies that a database is valid
+       relative to the plan and each deployed change's verification scripts.
+     - Changed the format of the list of changes output by `deploy` and
+       `revert` so that each now gets "ok" or "not ok" printed on success or
+       failure.
+     - Added short aliases for commonly-used core options:
+       * -f for --plan-file
+       * -v for --verbose
+       * -h for --db-host
+       * -p for --db-port
+
 0.940  2012-12-04T05:49:45Z
      - Fixed tests that failed due to I18N issues, with thanks to Arnaud
        (Arhuman) ASSAD!
@@ -56,6 +92,7 @@ Revision history for Perl extension App::Sqitch
        reads `rebase.no_prompt` before `revert.no_prompt`.' (Issue #49.)
      - Added the `show` command, which show information about changes or tags,
        or the contents of change script files. (Issue #57.)
+     - Renamed the `test` scripts and planned command to `verify`.
 
 0.938 2012-10-12T19:16:57Z
      - Added a primary key to the PostgreSQL `events` table, which should make

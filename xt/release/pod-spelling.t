@@ -62,4 +62,5 @@ CLDR
 lowercased
 unlocalized
 flipr
-
+change's
+queryable

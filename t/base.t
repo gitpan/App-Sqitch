@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 144;
+use Test::More tests => 156;
 #use Test::More 'no_plan';
 use Test::MockModule;
 use Path::Class;
@@ -214,7 +214,17 @@ $sqitch = $CLASS->new(verbosity => 2);
 is capture_stdout { $sqitch->trace('This ', "that\n", 'and the other') },
     '', 'Should get no trace output for verbosity 2';
 
+# Trace literal
+$sqitch = $CLASS->new(verbosity => 3);
+is capture_stdout { $sqitch->trace_literal('This ', "that\n", 'and the other') },
+    "trace: This that\ntrace: and the other",
+    'trace_literal should work';
+$sqitch = $CLASS->new(verbosity => 2);
+is capture_stdout { $sqitch->trace_literal('This ', "that\n", 'and the other') },
+    '', 'Should get no trace_literal output for verbosity 2';
+
 # Debug.
+$sqitch = $CLASS->new(verbosity => 2);
 is capture_stdout { $sqitch->debug('This ', "that\n", 'and the other') },
     "debug: This that\ndebug: and the other\n",
     'debug should work';
@@ -222,13 +232,32 @@ $sqitch = $CLASS->new(verbosity => 1);
 is capture_stdout { $sqitch->debug('This ', "that\n", 'and the other') },
     '', 'Should get no debug output for verbosity 1';
 
+# Debug literal.
+$sqitch = $CLASS->new(verbosity => 2);
+is capture_stdout { $sqitch->debug_literal('This ', "that\n", 'and the other') },
+    "debug: This that\ndebug: and the other",
+    'debug_literal should work';
+$sqitch = $CLASS->new(verbosity => 1);
+is capture_stdout { $sqitch->debug_literal('This ', "that\n", 'and the other') },
+    '', 'Should get no debug_literal output for verbosity 1';
+
 # Info.
+$sqitch = $CLASS->new(verbosity => 1);
 is capture_stdout { $sqitch->info('This ', "that\n", 'and the other') },
     "This that\nand the other\n",
     'info should work';
 $sqitch = $CLASS->new(verbosity => 0);
 is capture_stdout { $sqitch->info('This ', "that\n", 'and the other') },
     '', 'Should get no info output for verbosity 0';
+
+# Info literal.
+$sqitch = $CLASS->new(verbosity => 1);
+is capture_stdout { $sqitch->info_literal('This ', "that\n", 'and the other') },
+    "This that\nand the other",
+    'info_literal should work';
+$sqitch = $CLASS->new(verbosity => 0);
+is capture_stdout { $sqitch->info_literal('This ', "that\n", 'and the other') },
+    '', 'Should get no info_literal output for verbosity 0';
 
 # Comment.
 $sqitch = $CLASS->new(verbosity => 1);
@@ -240,6 +269,16 @@ is capture_stdout { $sqitch->comment('This ', "that\n", 'and the other') },
     "# This that\n# and the other\n",
     'comment should work with verbosity 0';
 
+# Comment literal.
+$sqitch = $CLASS->new(verbosity => 1);
+is capture_stdout { $sqitch->comment_literal('This ', "that\n", 'and the other') },
+    "# This that\n# and the other",
+    'comment_literal should work';
+$sqitch = $CLASS->new(verbosity => 0);
+is capture_stdout { $sqitch->comment_literal('This ', "that\n", 'and the other') },
+    "# This that\n# and the other",
+    'comment_literal should work with verbosity 0';
+
 # Emit.
 is capture_stdout { $sqitch->emit('This ', "that\n", 'and the other') },
     "This that\nand the other\n",
@@ -249,15 +288,34 @@ is capture_stdout { $sqitch->emit('This ', "that\n", 'and the other') },
     "This that\nand the other\n",
     'emit should work even with verbosity 0';
 
+# Emit literal.
+is capture_stdout { $sqitch->emit_literal('This ', "that\n", 'and the other') },
+    "This that\nand the other",
+    'emit_literal should work';
+$sqitch = $CLASS->new(verbosity => 0);
+is capture_stdout { $sqitch->emit_literal('This ', "that\n", 'and the other') },
+    "This that\nand the other",
+    'emit_literal should work even with verbosity 0';
+
 # Warn.
 is capture_stderr { $sqitch->warn('This ', "that\n", 'and the other') },
     "warning: This that\nwarning: and the other\n",
     'warn should work';
 
+# Warn_Literal.
+is capture_stderr { $sqitch->warn_literal('This ', "that\n", 'and the other') },
+    "warning: This that\nwarning: and the other",
+    'warn_literal should work';
+
 # Vent.
 is capture_stderr { $sqitch->vent('This ', "that\n", 'and the other') },
     "This that\nand the other\n",
     'vent should work';
+
+# Vent literal.
+is capture_stderr { $sqitch->vent_literal('This ', "that\n", 'and the other') },
+    "This that\nand the other",
+    'vent_literal should work';
 
 ##############################################################################
 # Test run().
@@ -269,7 +327,7 @@ my ($stdout, $stderr) = capture {
 };
 
 is $stdout, "hi there\n", 'The echo script should have run';
-is $stderr, '', 'Nothign should have gone to STDERR';
+is $stderr, '', 'Nothing should have gone to STDERR';
 
 ($stdout, $stderr) = capture {
     throws_ok {

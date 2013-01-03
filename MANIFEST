@@ -27,6 +27,7 @@ lib/App/Sqitch/Command/rework.pm
 lib/App/Sqitch/Command/show.pm
 lib/App/Sqitch/Command/status.pm
 lib/App/Sqitch/Command/tag.pm
+lib/App/Sqitch/Command/verify.pm
 lib/App/Sqitch/Config.pm
 lib/App/Sqitch/DateTime.pm
 lib/App/Sqitch/Engine.pm
@@ -71,6 +72,8 @@ lib/sqitch-status-usage.pod
 lib/sqitch-status.pod
 lib/sqitch-tag-usage.pod
 lib/sqitch-tag.pod
+lib/sqitch-verify-usage.pod
+lib/sqitch-verify.pod
 lib/sqitch.pod
 lib/sqitchchanges.pod
 lib/sqitchcommands.pod
@@ -137,10 +140,12 @@ t/sql/deploy/roles.sql
 t/sql/deploy/users.sql
 t/sql/deploy/widgets.sql
 t/sql/sqitch.plan
+t/sql/verify/users.sql
 t/sqlite.t
 t/status.t
 t/tag.t
 t/tag_cmd.t
 t/user.conf
+t/verify.t
 t/x.t
 xt/release/pod-spelling.t

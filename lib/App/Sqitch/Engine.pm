@@ -7,9 +7,10 @@ use utf8;
 use Try::Tiny;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
+use List::Util qw(first max);
 use namespace::autoclean;
 
-our $VERSION = '0.940';
+our $VERSION = '0.950';
 
 has sqitch => (
     is       => 'ro',
@@ -26,6 +27,18 @@ has start_at => (
 has no_prompt => (
     is      => 'rw',
     isa     => 'Bool',
+    default => 0,
+);
+
+has with_verify => (
+    is      => 'rw',
+    isa     => 'Bool',
+    default => 0,
+);
+
+has max_name_length => (
+    is      => 'rw',
+    isa     => 'Int',
     default => 0,
 );
 
@@ -64,7 +77,7 @@ sub name {
 sub config_vars { return }
 
 sub deploy {
-    my ( $self, $to, $mode ) = @_;
+    my ( $self, $to, $mode, $log_only ) = @_;
     my $sqitch   = $self->sqitch;
     my $plan     = $self->_sync_plan;
     my $to_index = $plan->count - 1;
@@ -123,6 +136,10 @@ sub deploy {
         )
     );
 
+    # Check that all dependencies will be satisfied.
+    $self->check_deploy_dependencies($plan, $to_index);
+
+    # Do it!
     $mode ||= 'all';
     my $meth = $mode eq 'change' ? '_deploy_by_change'
              : $mode eq 'tag'  ? '_deploy_by_tag'
@@ -130,26 +147,25 @@ sub deploy {
              : hurl deploy => __x 'Unknown deployment mode: "{mode}"', mode => $mode;
     ;
 
-    $self->$meth($plan, $to_index);
+    $self->max_name_length(
+        max map {
+            length $_->format_name_with_tags
+        } ($plan->changes)[$plan->position + 1..$to_index]
+    );
+
+    $self->$meth( $plan, $to_index, $log_only );
 }
 
 sub revert {
-    my ( $self, $to ) = @_;
+    my ( $self, $to, $log_only ) = @_;
     my $sqitch = $self->sqitch;
     my $plan   = $self->sqitch->plan;
 
     my @changes;
 
     if (defined $to) {
-        my $parsed = $to;
-        my $offset = App::Sqitch::Plan::ChangeList::_offset $parsed;
-        my ( $cname, $tag ) = split /@/ => $parsed, 2;
-        my $change = $self->find_change(
-            ( !$tag && $cname =~ /^[0-9a-f]{40}$/ ? (change_id => $cname) : (
-                change => $cname,
-                tag    => $tag,
-            )),
-            offset => $offset,
+        my ($change) = $self->_load_changes(
+            $self->change_for_key($to)
         ) or do {
             # Not deployed. Is it in the plan?
             if ( $plan->get($to) ) {
@@ -166,8 +182,9 @@ sub revert {
             );
         };
 
-        $change = App::Sqitch::Plan::Change->new( %{ $change }, plan => $plan );
-        @changes = $self->deployed_changes_since($change) or hurl {
+        @changes = $self->deployed_changes_since(
+            $self->_load_changes($change)
+        ) or hurl {
             ident => 'revert',
             message => __x(
                 'No changes deployed since: "{target}"',
@@ -218,24 +235,314 @@ sub revert {
         }
     }
 
-    # Create change objects.
-    @changes = map {
-        my $tags = $_->{tags} || [];
-        my $c    = App::Sqitch::Plan::Change->new(%{ $_ }, plan => $plan );
-        $c->add_tag(
-            App::Sqitch::Plan::Tag->new(name => $_, plan => $plan, change => $c )
-        ) for @{ $tags };
-        $c;
-    } reverse @changes;
-
-    # XXX Check for conflicts before reverting anything.
+    # Make change objects and check that all dependencies will be satisfied.
+    @changes = $self->_load_changes( reverse @changes );
+    $self->check_revert_dependencies(@changes);
 
     # Do we want to support modes, where failures would re-deploy to previous
     # tag or all the way back to the starting point? This would be very much
     # like deploy() mode. I'm thinking not, as a failure on a revert is not
     # something you generaly want to recover from by deploying back to where
     # you started. But maybe I'm wrong?
-    $self->revert_change($_) for @changes;
+    $self->max_name_length(
+        max map { length $_->format_name_with_tags } @changes
+    );
+    $self->revert_change($_, $log_only) for @changes;
+
+    return $self;
+}
+
+sub verify {
+    my ( $self, $from, $to ) = @_;
+    my $sqitch   = $self->sqitch;
+    my $plan     = $sqitch->plan;
+    my @changes  = $self->_load_changes( $self->deployed_changes );
+
+    $self->sqitch->info(__x(
+        'Verifying {destination}',
+        destination => $self->destination,
+    ));
+
+    if (!@changes) {
+        # Probably expected, but exit 1 anyway.
+        my $msg = $plan->count
+            ? __ 'No changes deployed'
+            : __ 'Nothing to verify (no planned or deployed changes)';
+        hurl {
+            ident   => 'verify',
+            message => $msg,
+            exitval => 1,
+        };
+    }
+
+    if ($plan->count == 0) {
+        # Oy, there are deployed changes, but not planned!
+        hurl verify => __ 'There are deployed changes, but none planned!';
+    }
+
+    # Figure out where to start and end relative to the plan.
+    my $from_idx = defined $from
+        ? $self->_trim_to('verify', $from, \@changes)
+        : 0;
+
+    my $to_idx = defined $to ? $self->_trim_to('verify', $to, \@changes, 1) : do {
+        if (my $id = $self->latest_change_id) {
+            $plan->index_of( $id );
+        }
+    } // $plan->count - 1;
+
+    # Run the verify tests.
+    if ( my $count = $self->_verify_changes($from_idx, $to_idx, !$to, @changes) ) {
+        # Emit a quick report.
+        # XXX Consider coloring red.
+        my $num_changes = 1 + $to_idx - $from_idx;
+        $num_changes = @changes if @changes > $num_changes;
+        my $msg = __ 'Verify Summary Report';
+        $sqitch->emit($/, $msg);
+        $sqitch->emit('-' x length $msg);
+        $sqitch->emit(__x 'Changes: {number}', number => $num_changes );
+        $sqitch->emit(__x 'Errors:  {number}', number => $count );
+        hurl verify => __ 'Verify failed';
+    }
+
+    # Success!
+    # XXX Consider coloring green.
+    $sqitch->emit(__ 'Verify successful');
+
+    return $self;
+}
+
+sub _trim_to {
+    my ( $self, $ident, $key, $changes, $pop ) = @_;
+    my $sqitch = $self->sqitch;
+    my $plan   = $sqitch->plan;
+
+    # Find the change in the database.
+    my $to_id = $self->change_id_for_key( $key ) || hurl $ident => (
+        defined eval { $plan->index_of( $key ) } ? __x(
+            'Change "{change}" has not been deployed',
+            change => $key,
+        ) : __x(
+            'Cannot find "{change}" in the database or the plan',
+            change => $key,
+        )
+    );
+
+    # Find the change in the plan.
+    my $to_idx = $plan->index_of( $to_id ) // hurl $ident => __x(
+        'Change "{change}" is deployed, but not planned',
+        change => $key,
+    );
+
+    # Pope or shift changes till we find the change we want.
+    if ($pop) {
+        pop @{ $changes }   while $changes->[-1]->id ne $to_id;
+    } else {
+        shift @{ $changes } while $changes->[0]->id  ne $to_id;
+    }
+
+    # We good.
+    return $to_idx;
+}
+
+sub _verify_changes {
+    my $self     = shift;
+    my $from_idx = shift;
+    my $to_idx   = shift;
+    my $pending  = shift;
+    my $sqitch   = $self->sqitch;
+    my $plan     = $sqitch->plan;
+    my $errcount = 0;
+    my $i        = -1;
+    my @seen;
+
+    my $max_name_len = max map {
+        length $_->format_name_with_tags
+    } @_, map { $plan->change_at($_) } $from_idx..$to_idx;
+
+    for my $change (@_) {
+        $i++;
+        my $errs     = 0;
+        my $reworked = 0;
+        my $name     = $change->format_name_with_tags;
+        $sqitch->emit_literal(
+            "  * $name ..",
+            '.' x ($max_name_len - length $name), ' '
+        );
+
+        my $plan_index = $plan->index_of( $change->id );
+        if (defined $plan_index) {
+            push @seen => $plan_index;
+            if ( $plan_index != ($from_idx + $i) ) {
+                $sqitch->comment(__ 'Out of order');
+                $errs++;
+            }
+            # Is it reworked?
+            $reworked = !! $plan->change_at($plan_index)->suffix;
+        } else {
+            $sqitch->comment(__ 'Not present in the plan');
+            $errs++;
+        }
+
+        # Run the verify script.
+        try {  $self->verify_change( $change ) } catch {
+            $sqitch->comment(eval { $_->message } // $_);
+            $errs++;
+        } unless $reworked;
+
+        # Emit pass/fail and add to the total error count.
+        $sqitch->emit( $errs ? __ 'not ok' : __ 'ok' );
+        $errcount += $errs;
+    }
+
+    # List off any undeployed changes.
+    for my $idx ($from_idx..$to_idx) {
+        next if defined first { $_ == $idx } @seen;
+        my $change = $plan->change_at( $idx );
+        my $name   = $change->format_name_with_tags;
+        $sqitch->emit_literal(
+            "  * $name ..",
+            '.' x ($max_name_len - length $name), ' ',
+            __ 'not ok', ' '
+        );
+        $sqitch->comment(__ 'Not deployed');
+        $errcount++;
+    }
+
+    # List off any pending changes.
+    if ($pending && $to_idx < ($plan->count - 1)) {
+        if (my @pending = map {
+            $plan->change_at($_)
+        } ($to_idx + 1)..($plan->count - 1) ) {
+            $sqitch->emit(__n(
+                'Undeployed change:',
+                'Undeployed changes:',
+                @pending,
+            ));
+
+            $sqitch->emit( '  * ', $_->format_name_with_tags ) for @pending;
+        }
+    }
+
+    return $errcount;
+}
+
+sub verify_change {
+    my ( $self, $change ) = @_;
+    my $file = $change->verify_file;
+    if (-e $file) {
+        return try { $self->run_verify($file) }
+        catch {
+            hurl {
+                ident => 'verify',
+                previous_exception => $_,
+                message => __x(
+                    'Verify script "{script}" failed.',
+                    script => $file,
+                ),
+            };
+        };
+    }
+
+    # The file does not exist. Complain, but don't die.
+    $self->sqitch->vent(__x(
+        'Verify script {file} does not exist',
+        file => $file,
+    ));
+
+    return $self;
+}
+
+sub run_deploy { shift->run_file(@_) }
+sub run_revert { shift->run_file(@_) }
+sub run_verify { shift->run_file(@_) }
+
+sub check_deploy_dependencies {
+    my ( $self, $plan, $to_index ) = @_;
+    my $from_index = $plan->position + 1;
+    $to_index    //= $plan->count - 1;
+    my @changes = map { $plan->change_at($_) } $from_index..$to_index;
+    my (%seen, @conflicts, @required);
+
+    for my $change (@changes) {
+        # Check for conflicts.
+        push @conflicts => grep {
+            $seen{ $_->id // '' } || $self->change_id_for_depend($_)
+        } $change->conflicts;
+
+        # Check for prerequisites.
+        push @required => grep { !$_->resolved_id(do {
+            if ( my $req = $seen{ $_->id // '' } ) {
+                $req->id;
+            } else {
+                $self->change_id_for_depend($_);
+            }
+        }) } $change->requires;
+        $seen{ $change->id } = $change;
+    }
+
+    if (@conflicts or @required) {
+        # Dependencies not satisfied. Put together the error messages.
+        my @msg;
+        push @msg, __nx(
+            'Conflicts with previously deployed change: {changes}',
+            'Conflicts with previously deployed changes: {changes}',
+            scalar @conflicts,
+            changes => join ' ', map { $_->as_string } @conflicts,
+        ) if @conflicts;
+
+        push @msg, __nx(
+            'Missing required change: {changes}',
+            'Missing required changes: {changes}',
+            scalar @required,
+            changes => join ' ', map { $_->as_string } @required,
+        ) if @required;
+
+        hurl deploy => join $/ => @msg;
+    }
+
+    # Make sure nothing isn't already deployed.
+    if ( my @ids = $self->are_deployed_changes(@changes) ) {
+        hurl deploy => __nx(
+            'Change "{changes}" has already been deployed',
+            'Changes have already been deployed: {changes}',
+            scalar @ids,
+            changes => join ' ', map { $seen{$_} } @ids
+        );
+    }
+
+    return $self;
+}
+
+sub check_revert_dependencies {
+    my $self = shift;
+    my $proj = $self->plan->project;
+    my (%seen, @msg);
+
+    for my $change (@_) {
+        $seen{ $change->id } = 1;
+        my @requiring = grep {
+            !$seen{ $_->{change_id} }
+        } $self->changes_requiring_change($change) or next;
+
+        # XXX Include change_id in the output?
+        push @msg => __nx(
+            'Change "{change}" required by currently deployed change: {changes}',
+            'Change "{change}" required by currently deployed changes: {changes}',
+            scalar @requiring,
+            change  => $change->format_name_with_tags,
+            changes => join ' ', map {
+                ($_->{project} eq $proj ? '' : "$_->{project}:" )
+                . $_->{change}
+                . ($_->{asof_tag} // '')
+            } @requiring
+        );
+    }
+
+    hurl revert => join $/, @msg if @msg;
+
+    # XXX Should we make sure that they are all deployed before trying to
+    # revert them?
 
     return $self;
 }
@@ -257,6 +564,29 @@ sub change_id_for_depend {
     );
 }
 
+sub _params_for_key {
+    my ( $self, $key ) = @_;
+    my $offset = App::Sqitch::Plan::ChangeList::_offset $key;
+    my ( $cname, $tag ) = split /@/ => $key, 2;
+    return (
+        ( !$tag && $cname =~ /^[0-9a-f]{40}$/ ? (change_id => $cname) : (
+            change => $cname,
+            tag    => $tag,
+        )),
+        offset => $offset,
+    );
+}
+
+sub change_id_for_key {
+    my $self = shift;
+    return $self->change_id_for( $self->_params_for_key(shift) );
+}
+
+sub change_for_key {
+    my $self = shift;
+    return $self->find_change( $self->_params_for_key(shift) );
+}
+
 sub find_change {
     my ( $self, %p ) = @_;
 
@@ -272,12 +602,25 @@ sub find_change {
     return $self->change_offset_from_id($change_id, $p{offset});
 }
 
+sub _load_changes {
+    my $self = shift;
+    my $plan = $self->sqitch->plan;
+    map {
+        my $tags = $_->{tags} || [];
+        my $c = App::Sqitch::Plan::Change->new(%{ $_ }, plan => $plan );
+        $c->add_tag(
+            App::Sqitch::Plan::Tag->new(name => $_, plan => $plan, change => $c )
+        ) for @{ $tags };
+        $c;
+    } @_;
+}
+
 sub _deploy_by_change {
-    my ( $self, $plan, $to_index ) = @_;
+    my ( $self, $plan, $to_index, $log_only ) = @_;
 
     # Just deploy each change. If any fails, we just stop.
     while ($plan->position < $to_index) {
-        $self->deploy_change($plan->next);
+        $self->deploy_change($plan->next, $log_only);
     }
 
     return $self;
@@ -307,13 +650,13 @@ sub _rollback {
 }
 
 sub _deploy_by_tag {
-    my ( $self, $plan, $to_index ) = @_;
+    my ( $self, $plan, $to_index, $log_only ) = @_;
 
     my ($last_tagged, @run);
     try {
         while ($plan->position < $to_index) {
             my $change = $plan->next;
-            $self->deploy_change($change);
+            $self->deploy_change($change, $log_only);
             push @run => $change;
             if ($change->tags) {
                 @run = ();
@@ -321,7 +664,7 @@ sub _deploy_by_tag {
             }
         }
     } catch {
-        if (my $ident = eval{ $_->ident }) {
+        if (my $ident = eval { $_->ident }) {
             $self->sqitch->vent($_->message) unless $ident eq 'private'
         } else {
             $self->sqitch->vent($_);
@@ -333,17 +676,17 @@ sub _deploy_by_tag {
 }
 
 sub _deploy_all {
-    my ( $self, $plan, $to_index ) = @_;
+    my ( $self, $plan, $to_index, $log_only ) = @_;
 
     my @run;
     try {
         while ($plan->position < $to_index) {
             my $change = $plan->next;
-            $self->deploy_change($change);
+            $self->deploy_change($change, $log_only);
             push @run => $change;
         }
     } catch {
-        if (my $ident = eval{ $_->ident }) {
+        if (my $ident = eval { $_->ident }) {
             $self->sqitch->vent($_->message) unless $ident eq 'private'
         } else {
             $self->sqitch->vent($_);
@@ -373,6 +716,7 @@ sub _sync_plan {
 
         $plan->position($idx);
         if (my @tags = $change->tags) {
+            $self->log_new_tags($change);
             $self->start_at( $change->format_name . $tags[-1]->format_name );
         } else {
             $self->start_at( $change->format_name );
@@ -402,49 +746,32 @@ sub is_deployed {
 }
 
 sub deploy_change {
-    my ( $self, $change ) = @_;
+    my ( $self, $change, $log_only ) = @_;
     my $sqitch = $self->sqitch;
-    $sqitch->info('  + ', $change->format_name_with_tags);
+    my $name = $change->format_name_with_tags;
+    $sqitch->info_literal(
+        "  + $name ..",
+        '.' x ($self->max_name_length - length $name), ' '
+    );
     $self->begin_work($change);
 
-    # Check for conflicts.
-    if (my @conflicts = grep {
-        $self->change_id_for_depend($_)
-    } $change->conflicts) {
-        hurl deploy => __nx(
-            'Conflicts with previously deployed change: {changes}',
-            'Conflicts with previously deployed changes: {changes}',
-            scalar @conflicts,
-            changes => join ' ', map { $_->as_string } @conflicts,
-        )
-    }
-
-    # Check for dependencies.
-    if (my @required = grep {
-        !$_->resolved_id( $self->change_id_for_depend($_) )
-    } $change->requires) {
-        hurl deploy => __nx(
-            'Missing required change: {changes}',
-            'Missing required changes: {changes}',
-            scalar @required,
-            changes => join ' ', map { $_->as_string } @required,
-        );
-    }
-
     return try {
-        $self->run_file($change->deploy_file);
+        $self->run_deploy($change->deploy_file) unless $log_only;
         try {
+            $self->verify_change( $change ) if $self->with_verify;
             $self->log_deploy_change($change);
+            $sqitch->info(__ 'ok');
         } catch {
-            # Oy, our logging died. Rollback.
+            # Oy, logging or verify failed. Rollback.
             $sqitch->vent(eval { $_->message } // $_);
             $self->rollback_work($change);
 
             # Begin work and run the revert.
             try {
-                $self->sqitch->info('  - ', $change->format_name_with_tags);
+                # Don't bother displaying the reverting change name.
+                # $self->sqitch->info('  - ', $change->format_name_with_tags);
                 $self->begin_work($change);
-                $self->run_file($change->revert_file);
+                $self->run_revert($change->revert_file) unless $log_only;
             } catch {
                 # Oy, the revert failed. Just emit the error.
                 $sqitch->vent(eval { $_->message } // $_);
@@ -455,34 +782,27 @@ sub deploy_change {
         $self->finish_work($change);
     } catch {
         $self->log_fail_change($change);
+        $sqitch->info(__ 'not ok');
         die $_;
     };
 }
 
 sub revert_change {
-    my ( $self, $change ) = @_;
-    $self->sqitch->info('  - ', $change->format_name_with_tags);
+    my ( $self, $change, $log_only ) = @_;
+    my $sqitch = $self->sqitch;
+    my $name   = $change->format_name_with_tags;
+    $sqitch->info_literal(
+        "  - $name ..",
+        '.' x ($self->max_name_length - length $name), ' '
+    );
+
     $self->begin_work($change);
 
-    if (my @requiring = $self->changes_requiring_change($change)) {
-        my $proj = $self->plan->project;
-        # XXX Include change_id in the output?
-        hurl revert => __nx(
-            'Required by currently deployed change: {changes}',
-            'Required by currently deployed changes: {changes}',
-            scalar @requiring,
-            changes => join ' ', map {
-                ($_->{project} eq $proj ? '' : "$_->{project}:" )
-                . $_->{change}
-                . ($_->{asof_tag} // '')
-            } @requiring,
-        );
-    }
-
     try {
-        $self->run_file($change->revert_file);
+        $self->run_revert($change->revert_file) unless $log_only;
         try {
             $self->log_revert_change($change);
+            $sqitch->info(__ 'ok');
         } catch {
             # Oy, our logging died. Rollback and revert this change.
             $self->sqitch->vent(eval { $_->message } // $_);
@@ -492,6 +812,7 @@ sub revert_change {
     } finally {
         $self->finish_work($change);
     } catch {
+        $sqitch->info(__ 'not ok');
         die $_;
     };
 }
@@ -552,6 +873,11 @@ sub log_revert_change {
     hurl "$class has not implemented log_revert_change()";
 }
 
+sub log_new_tags {
+    my $class = ref $_[0] || $_[0];
+    hurl "$class has not implemented log_new_tags()";
+}
+
 sub is_deployed_tag {
     my $class = ref $_[0] || $_[0];
     hurl "$class has not implemented is_deployed_tag()";
@@ -560,6 +886,11 @@ sub is_deployed_tag {
 sub is_deployed_change {
     my $class = ref $_[0] || $_[0];
     hurl "$class has not implemented is_deployed_change()";
+}
+
+sub are_deployed_changes {
+    my $class = ref $_[0] || $_[0];
+    hurl "$class has not implemented are_deployed_changes()";
 }
 
 sub change_id_for {
@@ -653,7 +984,7 @@ the engine code.
 
 =head1 Interface
 
-=head3 Class Methods
+=head2 Class Methods
 
 =head3 C<config_vars>
 
@@ -721,6 +1052,30 @@ The App::Sqitch object driving the whole thing.
 
 Instantiates and returns a App::Sqitch::Engine object.
 
+=head2 Instance Accessors
+
+=head3 C<sqitch>
+
+The current Sqitch object.
+
+=head3 C<start_at>
+
+The point in the plan from which to start deploying changes.
+
+=head3 C<no_prompt>
+
+Boolean indicating whether or not to prompt for reverts. False by default.
+
+=head3 C<with_verify>
+
+Boolean indicating whether or not to run the verification script after each
+deploy script. False by default.
+
+=head3 C<variables>
+
+A hash of engine client variables to be set. May be set and retrieved as a
+list.
+
 =head2 Instance Methods
 
 =head3 C<name>
@@ -741,11 +1096,11 @@ subclasses may override it to provide other values, such as when neither of
 the above have values but there is nevertheless a default value assumed by the
 engine. Used internally to name the destination in status messages.
 
-=head3 variables
+=head3 C<variables>
 
-=head3 set_variables
+=head3 C<set_variables>
 
-=head3 clear_variables
+=head3 C<clear_variables>
 
   my %vars = $engine->variables;
   $engine->set_variables(foo => 'bar', baz => 'hi there');
@@ -761,6 +1116,7 @@ the C<psql> client via the C<--set> option.
 
   $engine->deploy($to_target);
   $engine->deploy($to_target, $mode);
+  $engine->deploy($to_target, $mode, $log_only);
 
 Deploys changes to the destination database, starting with the current
 deployment state, and continuing to C<$to_target>. C<$to_target> must be a
@@ -791,29 +1147,104 @@ assumption that a change failure is total, and the change may be applied again.
 
 =back
 
+The C<$log_only> parameter, if passed a true values, causes the deploy to log
+the deployed changes I<without running the deploy scripts>. This is useful for
+an existing database schema that needs to be converted to Sqitch.
+
 Note that, in the event of failure, if a reversion fails, the destination
 database B<may be left in a corrupted state>. Write your revert scripts
 carefully!
 
 =head3 C<revert>
 
+  $engine->revert;
   $engine->revert($tag);
+  $engine->revert($tag, $log_only);
 
 Reverts the L<App::Sqitch::Plan::Tag> from the database, including all of its
-associated changes.
+associated changes. The C<$log_only> parameter, if passed a true values,
+causes the revert to log the reverted changes I<without running the revert
+scripts>.
+
+=head3 C<verify>
+
+  $engine->verify;
+  $engine->verify( $from );
+  $engine->verify( $from, $to );
+  $engine->verify( undef, $to );
+
+Verifies the database against the plan. Pass in change identifiers, as
+described in L<sqitchchanges>, to limit the changes to verify. For each
+change, information will be emitted if:
+
+=over
+
+=item *
+
+It does not appear in the plan.
+
+=item *
+
+It has not been deployed to the database.
+
+=item *
+
+It has been deployed out-of-order relative to the plan.
+
+=item *
+
+Its verify script fails.
+
+=back
+
+Changes without verify scripts will emit a warning, but not constitute a
+failure. If there are any failures, an exception will be thrown once all
+verifications have completed.
+
+=head3 C<check_deploy_dependencies>
+
+  $engine->check_deploy_dependencies;
+  $engine->check_deploy_dependencies($to_index);
+
+Validates that all dependencies will be met for all changes to be deployed,
+starting with the currently-deployed change up to the specified index, or to
+the last change in the plan if no index is passed. If any of the changes to be
+deployed would conflict with previously-deployed changes or are missing any
+required changes, an exception will be thrown. Used internally by C<deploy()>
+to ensure that dependencies will be satisfied before deploying any changes.
+
+=head3 C<check_revert_dependencies>
+
+  $engine->check_revert_dependencies(@changes);
+
+Validates that the list of changes to be reverted, which should be passed in
+the order in which they will be reverted, are not depended upon by other
+changes. If any are depended upon by other changes, an exception will be
+thrown listing the changes that cannot be reverted and what changes depend on
+them. Used internally by C<revert()> to ensure no dependencies will be
+violated before revering any changes.
 
 =head3 C<deploy_change>
 
   $engine->deploy_change($change);
+  $engine->deploy_change($change, $log_only);
 
 Used internally by C<deploy()> to deploy an individual change.
 
 =head3 C<revert_change>
 
   $engine->revert_change($change);
+  $engine->revert_change($change, $log_only);
 
 Used internally by C<revert()> (and, by C<deploy()> when a deploy fails) to
 revert an individual change.
+
+=head3 C<verify_change>
+
+  $engine->verify_change($change);
+
+Used internally by C<deploy_change()> to verify a just-deployed change if
+C<with_verify> is true.
 
 =head3 C<is_deployed>
 
@@ -841,6 +1272,32 @@ will be the offset number of changes following the earliest change.
 Returns the L<App::Sqitch::Plan::Change> object representing the latest
 applied change. With the optional C<$offset> argument, the returned change
 will be the offset number of changes before the latest change.
+
+=head3 C<change_for_key>
+
+  my $change = if $engine->change_for_key(key);
+
+Searches the deployed changes for a change corresponding to the specified key,
+which should be in a format as described in L<sqitchchanges>. Throws an
+exception if the key matches more than one changes. Returns C<undef> if it
+matches no changes.
+
+=head3 C<change_id_for_key>
+
+  my $change_id = if $engine->change_id_for_key(key);
+
+Searches the deployed changes for a change corresponding to the specified key,
+which should be in a format as described in L<sqitchchanges>, and returns the
+change's ID. Throws an exception if the key matches more than one changes.
+Returns C<undef> if it matches no changes.
+
+=head3 C<change_for_key>
+
+  my $change = if $engine->change_for_key(key);
+
+Searches the list of deployed changes for a change corresponding to the
+specified key, which should be in a format as described in L<sqitchchanges>.
+Throws an exception if the key matches multiple changes.
 
 =head3 C<change_id_for_depend>
 
@@ -902,6 +1359,27 @@ Search by change name or tag.
 
 The offset, if passed, will be applied relative to whatever change is found by
 the above algorithm.
+
+=head3 C<run_deploy>
+
+  $engine->run_deploy($deploy_file);
+
+Runs a deploy script. The implementation is just an alias for C<run_file()>;
+subclasses may override as appropriate.
+
+=head3 C<run_revert>
+
+  $engine->run_revert($revert_file);
+
+Runs a revert script. The implementation is just an alias for C<run_file()>;
+subclasses may override as appropriate.
+
+=head3 C<run_verify>
+
+  $engine->run_verify($verify_file);
+
+Runs a deploy script. The implementation is just an alias for C<run_file()>;
+subclasses may override as appropriate.
 
 =head2 Abstract Instance Methods
 
@@ -967,6 +1445,14 @@ the database, and false if it has not.
 
 Should return true if the L<change|App::Sqitch::Plan::Change> has been
 deployed to the database, and false if it has not.
+
+=head3 C<are_deployed_changes>
+
+  say "Change $_ is deployed" for $engine->are_deployed_change(@changes);
+
+Should return the IDs of any of the changes passed in that are currently
+deployed. Used by C<deploy> to ensure that no changes already deployed are
+re-deployed.
 
 =head3 C<change_id_for>
 
@@ -1055,6 +1541,14 @@ of the change failed.
 
 Should write to and/or remove from the database metadata and history the
 records necessary to indicate that the change has been reverted.
+
+=head3 C<log_new_tags>
+
+  $engine->log_new_tags($change);
+
+Given a change, if it has any tags that are not currently logged in the
+database, they should be logged. This is assuming, of course, that the change
+itself has previously been logged.
 
 =head3 C<earliest_change_id>
 
@@ -1482,7 +1976,7 @@ David E. Wheeler <david@justatheory.com>
 
 =head1 License
 
-Copyright (c) 2012 iovation Inc.
+Copyright (c) 2012-2013 iovation Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

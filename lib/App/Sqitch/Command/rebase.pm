@@ -10,7 +10,7 @@ use List::Util qw(first);
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.940';
+our $VERSION = '0.950';
 
 has onto_target => (
     is  => 'ro',
@@ -25,6 +25,30 @@ has upto_target => (
 has no_prompt => (
     is  => 'ro',
     isa => 'Bool'
+);
+
+has mode => (
+    is  => 'ro',
+    isa => enum([qw(
+        change
+        tag
+        all
+    )]),
+    default => 'all',
+);
+
+has verify => (
+    is       => 'ro',
+    isa      => 'Bool',
+    required => 1,
+    default  => 0,
+);
+
+has log_only => (
+    is       => 'ro',
+    isa      => 'Bool',
+    required => 1,
+    default  => 0,
 );
 
 has deploy_variables => (
@@ -58,9 +82,12 @@ sub options {
     return qw(
         onto-target|onto=s
         upto-target|upto=s
+        mode=s
+        verify!
         set|s=s%
         set-deploy|d=s%
         set-revert|r=s%
+        log-only
         y
     );
 }
@@ -68,9 +95,21 @@ sub options {
 sub configure {
     my ( $class, $config, $opt ) = @_;
 
-    my %params;
-    $params{onto_target} = $opt->{onto_target} if exists $opt->{onto_target};
-    $params{upto_target} = $opt->{upto_target} if exists $opt->{upto_target};
+    my %params = map { $_ => $opt->{$_} } grep { exists $opt->{$_} } qw(
+        onto_target
+        upto_target
+        log_only
+    );
+
+    # Verify?
+    $params{verify} = $opt->{verify}
+                   // $config->get( key => 'rebase.verify', as => 'boolean' )
+                   // $config->get( key => 'deploy.verify', as => 'boolean' )
+                   // 0;
+    $params{mode} = $opt->{mode}
+                 || $config->get( key => 'rebase.mode' )
+                 || $config->get( key => 'deploy.mode' )
+                 || 'all';
 
     if ( my $vars = $opt->{set} ) {
         # Merge with config.
@@ -123,11 +162,12 @@ sub configure {
 sub execute {
     my $self   = shift;
     my $engine = $self->sqitch->engine;
+    $engine->with_verify( $self->verify );
     $engine->no_prompt( $self->no_prompt );
     if (my %v = %{ $self->revert_variables }) { $engine->set_variables(%v) }
-    $engine->revert( $self->onto_target // shift );
+    $engine->revert( $self->onto_target // shift, $self->log_only );
     if (my %v = %{ $self->deploy_variables }) { $engine->set_variables(%v) }
-    $engine->deploy( $self->upto_target // shift );
+    $engine->deploy( $self->upto_target // shift, $self->mode, $self->log_only );
     return $self;
 }
 
@@ -189,7 +229,7 @@ David E. Wheeler <david@justatheory.com>
 
 =head1 License
 
-Copyright (c) 2012 iovation Inc.
+Copyright (c) 2012-2013 iovation Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

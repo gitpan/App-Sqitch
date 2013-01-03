@@ -14,7 +14,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Engine';
 
-our $VERSION = '0.940';
+our $VERSION = '0.950';
 
 has client => (
     is       => 'ro',
@@ -312,6 +312,13 @@ sub run_file {
     $self->_run('--file' => $file);
 }
 
+sub run_verify {
+    my $self = shift;
+    # Suppress STDOUT unless we want extra verbosity.
+    my $meth = $self->can($self->sqitch->verbosity > 1 ? '_run' : '_capture');
+    return $self->$meth('--file' => @_);
+}
+
 sub run_handle {
     my ($self, $fh) = @_;
     $self->_spool($fh);
@@ -406,6 +413,58 @@ sub log_deploy_change {
     }
 
     return $self->_log_event( deploy => $change );
+}
+
+sub log_new_tags {
+    my ( $self, $change ) = @_;
+    my @tags   = $change->tags or return $self;
+    my $sqitch = $self->sqitch;
+
+    my ($id, $name, $proj, $user, $email) = (
+        $change->id,
+        $change->format_name,
+        $change->project,
+        $sqitch->user_name,
+        $sqitch->user_email
+    );
+
+    $self->_dbh->do(
+        q{
+            INSERT INTO tags (
+                   tag_id
+                 , tag
+                 , project
+                 , change_id
+                 , note
+                 , committer_name
+                 , committer_email
+                 , planned_at
+                 , planner_name
+                 , planner_email
+            )
+            SELECT tid, tg, proj, chid, n, name, email, at, pname, pemail FROM ( VALUES
+        } . join( ",\n                ", ( q{(?, ?, ?, ?, ?, ?, ?, ?::timestamptz, ?, ?)} ) x @tags )
+        . q{
+            ) i(tid, tg, proj, chid, n, name, email, at, pname, pemail)
+              LEFT JOIN tags ON i.tid = tags.tag_id
+             WHERE tags.tag_id IS NULL
+         },
+        undef,
+        map { (
+            $_->id,
+            $_->format_name,
+            $proj,
+            $id,
+            $_->note,
+            $user,
+            $email,
+            $_->timestamp->as_string(format => 'iso'),
+            $_->planner_name,
+            $_->planner_email,
+        ) } @tags
+    );
+
+    return $self;
 }
 
 sub log_fail_change {
@@ -510,6 +569,15 @@ sub is_deployed_change {
     }, undef, $change->id)->[0];
 }
 
+sub are_deployed_changes {
+    my $self = shift;
+    @{ $self->_dbh->selectcol_arrayref(
+        'SELECT change_id FROM changes WHERE change_id = ANY(?)',
+        undef,
+        [ map { $_->id } @_ ],
+    ) };
+}
+
 sub changes_requiring_change {
     my ( $self, $change ) = @_;
     return @{ $self->_dbh->selectall_arrayref(q{
@@ -580,13 +648,18 @@ sub change_id_for {
             }, undef, $project, $change, '@' . $tag)->[0];
         }
 
-        # Find by change name.
-        return $dbh->selectcol_arrayref(q{
+        # Find by change name. Fail if there are multiple.
+        my $ids = $dbh->selectcol_arrayref(q{
             SELECT change_id
               FROM changes
              WHERE project = ?
                AND change  = ?
-        }, undef, $project, $change)->[0];
+        }, undef, $project, $change);
+        return $ids->[0] if @{ $ids } < 2;
+        hurl engine => __x(
+            'Key "{key}" matches multiple changes',
+            key => $change,
+        );
     }
 
     if ( my $tag = $p{tag} ) {
@@ -1010,6 +1083,14 @@ sub _run {
     return $sqitch->run( $self->psql, @_ );
 }
 
+sub _capture {
+    my $self   = shift;
+    my $sqitch = $self->sqitch;
+    my $pass   = $self->password or return $sqitch->capture( $self->psql, @_ );
+    local $ENV{PGPASSWORD} = $pass;
+    return $sqitch->capture( $self->psql, @_ );
+}
+
 sub _spool {
     my $self   = shift;
     my $fh     = shift;
@@ -1076,7 +1157,7 @@ David E. Wheeler <david@justatheory.com>
 
 =head1 License
 
-Copyright (c) 2012 iovation Inc.
+Copyright (c) 2012-2013 iovation Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

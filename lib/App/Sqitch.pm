@@ -22,7 +22,7 @@ use Moose::Util::TypeConstraints 2.0300;
 use MooseX::Types::Path::Class 0.05;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.940';
+our $VERSION = '0.950';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -255,7 +255,7 @@ has pager => (
     lazy     => 1,
     isa      => type('IO::Pager' => where {
         # IO::Pager annoyingly just returns the file handle if there is no TTY.
-        eval { $_->isa('IO::Pager') } || ref $_ eq 'GLOB'
+        eval { $_->isa('IO::Pager') || $_->isa('IO::Handle') } || ref $_ eq 'GLOB'
     }),
     default  => sub {
         require IO::Pager;
@@ -267,7 +267,9 @@ has pager => (
             }
         } unless IO::Pager->can('say');
 
-        IO::Pager->new(\*STDOUT);
+        my $fh = IO::Pager->new(\*STDOUT);
+        $fh->binmode(':encoding(UTF-8)') if eval { $fh->isa('IO::Pager') };
+        $fh;
     },
 );
 
@@ -320,13 +322,13 @@ sub go {
 
 sub _core_opts {
     return qw(
-        plan-file=s
+        plan-file|f=s
         engine=s
         db-client=s
         db-name|d=s
         db-username|db-user|u=s
-        db-host=s
-        db-port=i
+        db-host|h=s
+        db-port|p=i
         top-dir|dir=s
         deploy-dir=s
         revert-dir=s
@@ -334,7 +336,7 @@ sub _core_opts {
         extension=s
         etc-path
         quiet
-        verbose+
+        verbose|v+
         help
         man
         version
@@ -561,10 +563,12 @@ sub _prepend {
 
 sub page {
     my $pager = shift->pager;
-    # If the pager is a glob, we don't have to encode, because -CAS does it.
-    return $pager->say(@_) if ref $pager eq 'GLOB';
-    # If it is an object, we have to encode it. Ugh.
-    $pager->say(encode_utf8 join '', map { $_ // '' } @_);
+    return $pager->say(@_);
+}
+
+sub page_literal {
+    my $pager = shift->pager;
+    return $pager->print(@_);
 }
 
 sub trace {
@@ -572,9 +576,19 @@ sub trace {
     $self->emit( _prepend 'trace:', @_ ) if $self->verbosity > 2;
 }
 
+sub trace_literal {
+    my $self = shift;
+    $self->emit_literal( _prepend 'trace:', @_ ) if $self->verbosity > 2;
+}
+
 sub debug {
     my $self = shift;
     $self->emit( _prepend 'debug:', @_ ) if $self->verbosity > 1;
+}
+
+sub debug_literal {
+    my $self = shift;
+    $self->emit_literal( _prepend 'debug:', @_ ) if $self->verbosity > 1;
 }
 
 sub info {
@@ -582,15 +596,31 @@ sub info {
     $self->emit(@_) if $self->verbosity;
 }
 
+sub info_literal {
+    my $self = shift;
+    $self->emit_literal(@_) if $self->verbosity;
+}
+
 sub comment {
     my $self = shift;
     $self->emit( _prepend '#', @_ );
+}
+
+sub comment_literal {
+    my $self = shift;
+    $self->emit_literal( _prepend '#', @_ );
 }
 
 sub emit {
     shift;
     local $|=1;
     say @_;
+}
+
+sub emit_literal {
+    shift;
+    local $|=1;
+    print @_;
 }
 
 sub vent {
@@ -602,9 +632,23 @@ sub vent {
     select $fh;
 }
 
+sub vent_literal {
+    shift;
+    my $fh = select;
+    select STDERR;
+    local $|=1;
+    print STDERR @_;
+    select $fh;
+}
+
 sub warn {
     my $self = shift;
     $self->vent(_prepend 'warning:', @_);
+}
+
+sub warn_literal {
+    my $self = shift;
+    $self->vent_literal(_prepend 'warning:', @_);
 }
 
 __PACKAGE__->meta->make_immutable;
@@ -758,61 +802,90 @@ system command. Returns true on success and throws an exception on failure.
 
 =head3 C<trace>
 
-  $sqitch->trace('About to fuzzle the wuzzle.');
+=head3 C<trace_literal>
+
+  $sqitch->trace_literal('About to fuzzle the wuzzle.');
+  $sqitch->trace('Done.');
 
 Send trace information to C<STDOUT> if the verbosity level is 3 or higher.
 Trace messages will have C<trace: > prefixed to every line. If it's lower than
-3, nothing will be output.
+3, nothing will be output. C<trace> appends a newline to the end of the
+message while C<trace_literal> does not.
 
 =head3 C<debug>
 
+=head3 C<debug_literal>
+
   $sqitch->debug('Found snuggle in the crib.');
+  $sqitch->debug_literal('ITYM "snuggie".');
 
 Send debug information to C<STDOUT> if the verbosity level is 2 or higher.
 Debug messages will have C<debug: > prefixed to every line. If it's lower than
-2, nothing will be output.
+2, nothing will be output. C<debug> appends a newline to the end of the
+message while C<debug_literal> does not.
 
 =head3 C<info>
 
+=head3 C<info_literal>
+
   $sqitch->info('Nothing to deploy (up-to-date)');
+  $sqitch->info_literal('Going to frobble the shiznet.');
 
 Send informational message to C<STDOUT> if the verbosity level is 1 or higher,
 which, by default, it is. Should be used for normal messages the user would
 normally want to see. If verbosity is lower than 1, nothing will be output.
+C<info> appends a newline to the end of the message while C<info_literal> does
+not.
 
 =head3 C<comment>
 
+=head3 C<comment_literal>
+
   $sqitch->comment('On database flipr_test');
+  $sqitch->comment_literal('Uh-oh...');
 
 Send comments to C<STDOUT> if the verbosity level is 1 or higher, which, by
 default, it is. Comments have C<# > prefixed to every line. If verbosity is
-lower than 1, nothing will be output.
+lower than 1, nothing will be output. C<comment> appends a newline to the end
+of the message while C<comment_literal> does not.
 
 =head3 C<emit>
 
+=head3 C<emit_literal>
+
   $sqitch->emit('core.editor=emacs');
+  $sqitch->emit_literal('Getting ready...');
 
 Send a message to C<STDOUT>, without regard to the verbosity. Should be used
-only if the user explicitly asks for output, such as for
-C<sqitch config --get core.editor>.
+only if the user explicitly asks for output, such as for C<sqitch config --get
+core.editor>. C<emit> appends a newline to the end of the message while
+C<emit_literal> does not.
 
 =head3 C<vent>
 
+=head3 C<vent_literal>
+
   $sqitch->vent('That was a misage.');
+  $sqitch->vent_literal('This is going to be bad...');
 
 Send a message to C<STDERR>, without regard to the verbosity. Should be used
 only for error messages to be printed before exiting with an error, such as
-when reverting failed changes.
+when reverting failed changes. C<vent> appends a newline to the end of the
+message while C<vent_literal> does not.
 
 =head3 C<page>
 
+=head3 C<page_literal>
+
   $sqitch->page('Search results:');
+  $sqitch->page("Here we go\n");
 
 Like C<emit()>, but sends the output to a pager handle rather than C<STDOUT>.
 Unless there is no TTY (such as when output is being piped elsewhere), in
-which case it I<is> sent to C<STDOUT>. Meant to be used to send a lot of data
-to the user at once, such as when display the results of searching the event
-log:
+which case it I<is> sent to C<STDOUT>. C<page> appends a newline to the end of
+the message while C<page_literal> does not. Meant to be used to send a lot of
+data to the user at once, such as when display the results of searching the
+event log:
 
   $iter = $sqitch->engine->search_events;
   while ( my $change = $iter->() ) {
@@ -821,11 +894,15 @@ log:
 
 =head3 C<warn>
 
+=head3 C<warn_literal>
+
   $sqitch->warn('Could not find nerble; using nobble instead.');
+  $sqitch->warn_literal("Cannot read file: $!\n");
 
 Send a warning messages to C<STDERR>. Warnings will have C<warning: > prefixed
 to every line. Use if something unexpected happened but you can recover from
-it.
+it. C<warn> appends a newline to the end of the message while C<warn_literal>
+does not.
 
 =head3 C<prompt>
 
@@ -854,7 +931,7 @@ David E. Wheeler <david@justatheory.com>
 
 =head1 License
 
-Copyright (c) 2012 iovation Inc.
+Copyright (c) 2012-2013 iovation Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

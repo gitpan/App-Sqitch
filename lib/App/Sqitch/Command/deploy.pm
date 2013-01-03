@@ -10,7 +10,7 @@ use List::Util qw(first);
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.940';
+our $VERSION = '0.950';
 
 has to_target => (
     is  => 'ro',
@@ -25,6 +25,20 @@ has mode => (
         all
     )]),
     default => 'all',
+);
+
+has log_only => (
+    is       => 'ro',
+    isa      => 'Bool',
+    required => 1,
+    default  => 0,
+);
+
+has verify => (
+    is       => 'ro',
+    isa      => 'Bool',
+    required => 1,
+    default  => 0,
 );
 
 has variables => (
@@ -42,6 +56,8 @@ sub options {
         to-target|to|target=s
         mode=s
         set|s=s%
+        log-only
+        verify!
     );
 }
 
@@ -49,7 +65,9 @@ sub configure {
     my ( $class, $config, $opt ) = @_;
 
     my %params = (
-        mode => $opt->{mode} || $config->get( key => 'deploy.mode' ) || 'all',
+        mode     => $opt->{mode}   || $config->get( key => 'deploy.mode' )   || 'all',
+        verify   => $opt->{verify} // $config->get( key => 'deploy.verify', as => 'boolean' ) // 0,
+        log_only => $opt->{log_only} || 0,
     );
     $params{to_target} = $opt->{to_target} if exists $opt->{to_target};
 
@@ -64,12 +82,12 @@ sub configure {
     return \%params;
 }
 
-
 sub execute {
     my $self   = shift;
     my $engine = $self->sqitch->engine;
+    $engine->with_verify( $self->verify );
     if (my %v = %{ $self->variables }) { $engine->set_variables(%v) }
-    $engine->deploy($self->to_target // shift, $self->mode);
+    $engine->deploy( $self->to_target // shift, $self->mode, $self->log_only );
     return $self;
 }
 
@@ -131,7 +149,7 @@ David E. Wheeler <david@justatheory.com>
 
 =head1 License
 
-Copyright (c) 2012 iovation Inc.
+Copyright (c) 2012-2013 iovation Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -1,7 +1,5 @@
 #!/usr/bin/perl -w
 
-# Add change_id_for
-
 use strict;
 use warnings;
 use 5.010;
@@ -156,13 +154,24 @@ is_deeply [$pg->psql], [qw(
 ), @std_opts], 'psql command should be as optioned';
 
 ##############################################################################
-# Test _run() and _spool().
-can_ok $pg, qw(_run _spool);
+# Test _run(), _capture(), and _spool().
+can_ok $pg, qw(_run _capture _spool);
 my $mock_sqitch = Test::MockModule->new('App::Sqitch');
 my (@run, $exp_pass);
 $mock_sqitch->mock(run => sub {
     shift;
     @run = @_;
+    if (defined $exp_pass) {
+        is $ENV{PGPASSWORD}, $exp_pass, qq{PGPASSWORD should be "$exp_pass"};
+    } else {
+        ok !exists $ENV{PGPASSWORD}, 'PGPASSWORD should not exist';
+    }
+});
+
+my @capture;
+$mock_sqitch->mock(capture => sub {
+    shift;
+    @capture = @_;
     if (defined $exp_pass) {
         is $ENV{PGPASSWORD}, $exp_pass, qq{PGPASSWORD should be "$exp_pass"};
     } else {
@@ -190,6 +199,10 @@ ok $pg->_spool('FH'), 'Call _spool';
 is_deeply \@spool, ['FH', $pg->psql],
     'Command should be passed to spool()';
 
+ok $pg->_capture(qw(foo bar baz)), 'Call _capture';
+is_deeply \@capture, [$pg->psql, qw(foo bar baz)],
+    'Command should be passed to capture()';
+
 # Remove the password.
 delete $config{'core.pg.password'};
 ok $pg = $CLASS->new(sqitch => $sqitch), 'Create a pg with sqitch with no pw';
@@ -202,6 +215,10 @@ ok $pg->_spool('FH'), 'Call _spool again';
 is_deeply \@spool, ['FH', $pg->psql],
     'Command should be passed to spool() again';
 
+ok $pg->_capture(qw(foo bar baz)), 'Call _capture again';
+is_deeply \@capture, [$pg->psql, qw(foo bar baz)],
+    'Command should be passed to capture() again';
+
 ##############################################################################
 # Test file and handle running.
 ok $pg->run_file('foo/bar.sql'), 'Run foo/bar.sql';
@@ -211,6 +228,17 @@ is_deeply \@run, [$pg->psql, '--file', 'foo/bar.sql'],
 ok $pg->run_handle('FH'), 'Spool a "file handle"';
 is_deeply \@spool, ['FH', $pg->psql],
     'Handle should be passed to spool()';
+
+# Verify should go to capture unless verosity is > 1.
+ok $pg->run_verify('foo/bar.sql'), 'Verify foo/bar.sql';
+is_deeply \@capture, [$pg->psql, '--file', 'foo/bar.sql'],
+    'Verify file should be passed to capture()';
+
+$mock_sqitch->mock(verbosity => 2);
+ok $pg->run_verify('foo/bar.sql'), 'Verify foo/bar.sql again';
+is_deeply \@run, [$pg->psql, '--file', 'foo/bar.sql'],
+    'Verifile file should be passed to run() for high verbosity';
+
 $mock_sqitch->unmock_all;
 $mock_config->unmock_all;
 
@@ -441,8 +469,12 @@ subtest 'live database' => sub {
     my ($tag) = $change->tags;
     is $change->name, 'users', 'Should have "users" change';
     ok !$pg->is_deployed_change($change), 'The change should not be deployed';
+    is_deeply [$pg->are_deployed_changes($change)], [],
+        'The change should not be deployed';
     ok $pg->log_deploy_change($change), 'Deploy "users" change';
     ok $pg->is_deployed_change($change), 'The change should now be deployed';
+    is_deeply [$pg->are_deployed_changes($change)], [$change->id],
+        'The change should now be deployed';
 
     is $pg->earliest_change_id, $change->id, 'Should get users ID for earliest change ID';
     is $pg->earliest_change_id(1), undef, 'Should get no change offset 1 from earliest';
@@ -549,9 +581,44 @@ subtest 'live database' => sub {
     is_deeply all( $pg->search_events ), \@events, 'Should have one event';
 
     ##########################################################################
+    # Test log_new_tags().
+    ok $pg->log_new_tags($change), 'Log new tags for "users" change';
+    is_deeply all_tags(), [[
+        $tag->id,
+        '@alpha',
+        $change->id,
+        'pg',
+        'Good to go!',
+        $sqitch->user_name,
+        $sqitch->user_email,
+        $tag->planner_name,
+        $tag->planner_email,
+    ]], 'The tag should be the same';
+
+    # Delete that tag.
+    $pg->_dbh->do('DELETE FROM tags');
+    is_deeply all_tags(), [], 'Should now have no tags';
+
+    # Put it back.
+    ok $pg->log_new_tags($change), 'Log new tags for "users" change again';
+    is_deeply all_tags(), [[
+        $tag->id,
+        '@alpha',
+        $change->id,
+        'pg',
+        'Good to go!',
+        $sqitch->user_name,
+        $sqitch->user_email,
+        $tag->planner_name,
+        $tag->planner_email,
+    ]], 'The tag should be back';
+
+    ##########################################################################
     # Test log_revert_change().
     ok $pg->log_revert_change($change), 'Revert "users" change';
     ok !$pg->is_deployed_change($change), 'The change should no longer be deployed';
+    is_deeply [$pg->are_deployed_changes($change)], [],
+        'The change should no longer be deployed';
 
     is $pg->earliest_change_id, undef, 'Should get undef for earliest change';
     is $pg->latest_change_id, undef, 'Should get undef for latest change';
@@ -610,6 +677,8 @@ subtest 'live database' => sub {
     # Test log_fail_change().
     ok $pg->log_fail_change($change), 'Fail "users" change';
     ok !$pg->is_deployed_change($change), 'The change still should not be deployed';
+    is_deeply [$pg->are_deployed_changes($change)], [],
+        'The change still should not be deployed';
     is $pg->earliest_change_id, undef, 'Should still get undef for earliest change';
     is $pg->latest_change_id, undef, 'Should still get undef for latest change';
     is_deeply all_changes(), [], 'Still should have not changes table record';
@@ -679,6 +748,8 @@ subtest 'live database' => sub {
     is $pg->latest_change_id(1), undef, 'Should still get no change offset 1 from latest';
 
     ok my $change2 = $plan->change_at(1),   'Get the second change';
+    is_deeply [sort $pg->are_deployed_changes($change, $change2)], [$change->id],
+        'Only the first change should be deployed';
     my ($req) = $change2->requires;
     ok $req->resolved_id($change->id),      'Set resolved ID in required depend';
     ok $pg->log_deploy_change($change2),    'Deploy second change';
@@ -713,6 +784,9 @@ subtest 'live database' => sub {
             $change2->planner_email,
         ],
     ], 'Should have both changes and requires/conflcits deployed';
+    is_deeply [sort $pg->are_deployed_changes($change, $change2)],
+        [sort $change->id, $change2->id],
+        'Both changes should be deployed';
     is_deeply get_dependencies($change->id), [],
         'Should still have no dependencies for "users"';
     is_deeply get_dependencies($change2->id), [
@@ -1363,7 +1437,7 @@ subtest 'live database' => sub {
         ],
     ) {
         my ( $desc, $params ) = @{ $spec };
-        is $pg->change_id_for(%{ $params }), undef, "Should find nothign for $desc";
+        is $pg->change_id_for(%{ $params }), undef, "Should find nothing for $desc";
     }
 
     ##########################################################################

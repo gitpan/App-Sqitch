@@ -10,7 +10,7 @@ use List::Util qw(first);
 use Moose;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.940';
+our $VERSION = '0.950';
 
 sub execute {
     my ( $self, $type, $key ) = @_;
@@ -130,7 +130,7 @@ David E. Wheeler <david@justatheory.com>
 
 =head1 License
 
-Copyright (c) 2012 iovation Inc.
+Copyright (c) 2012-2013 iovation Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

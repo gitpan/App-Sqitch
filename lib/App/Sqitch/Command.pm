@@ -10,7 +10,7 @@ use App::Sqitch::X qw(hurl);
 use Hash::Merge 'merge';
 use Moose;
 
-our $VERSION = '0.940';
+our $VERSION = '0.950';
 
 has sqitch => (
     is       => 'ro',
@@ -24,13 +24,21 @@ has sqitch => (
         probe
         verbosity
         trace
+        trace_literal
         debug
+        debug_literal
         info
+        info_literal
         comment
+        comment_literal
         emit
+        emit_literal
         vent
+        vent_literal
         warn
+        warn_literal
         page
+        page_literal
         prompt
         ask_y_n
     )],
@@ -441,7 +449,7 @@ David E. Wheeler <david@justatheory.com>
 
 =head1 License
 
-Copyright (c) 2012 iovation Inc.
+Copyright (c) 2012-2013 iovation Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

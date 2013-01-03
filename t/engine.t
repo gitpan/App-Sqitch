@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use 5.010;
 use utf8;
-use Test::More tests => 306;
+use Test::More tests => 535;
 #use Test::More 'no_plan';
 use App::Sqitch;
 use App::Sqitch::Plan;
@@ -28,10 +28,11 @@ BEGIN {
     $ENV{SQITCH_CONFIG} = 'nonexistent.conf';
 }
 
-can_ok $CLASS, qw(load new name no_prompt);
+can_ok $CLASS, qw(load new name no_prompt run_deploy run_revert run_verify);
 
 my ($is_deployed_tag, $is_deployed_change) = (0, 0);
 my @deployed_changes;
+my @deployed_change_ids;
 my @resolved;
 my @requiring;
 my @load_changes;
@@ -63,9 +64,10 @@ ENGINE: {
     }
     sub is_deployed_tag    { push @SEEN => [ is_deployed_tag   => $_[1] ]; $is_deployed_tag }
     sub is_deployed_change { push @SEEN => [ is_deployed_change  => $_[1] ]; $is_deployed_change }
+    sub are_deployed_changes { shift; push @SEEN => [ are_deployed_changes  => [@_] ]; @deployed_change_ids }
     sub change_id_for      { shift; push @SEEN => [ change_id_for => {@_} ]; shift @resolved }
     sub change_offset_from_id { shift; push @SEEN => [ change_offset_from_id => [@_] ]; $offset_change }
-    sub changes_requiring_change { push @SEEN => [ changes_requiring_change => $_[1] ]; @requiring }
+    sub changes_requiring_change { push @SEEN => [ changes_requiring_change => $_[1] ]; @{ shift @requiring } }
     sub earliest_change_id { push @SEEN => [ earliest_change_id  => $_[1] ]; $earliest_change_id }
     sub latest_change_id   { push @SEEN => [ latest_change_id    => $_[1] ]; $latest_change_id }
     sub initialized        { push @SEEN => 'initialized'; $initialized }
@@ -74,9 +76,12 @@ ENGINE: {
     sub deployed_changes   { push @SEEN => [ deployed_changes => $_[1] ]; @deployed_changes }
     sub load_change        { push @SEEN => [ load_change => $_[1] ]; @load_changes }
     sub deployed_changes_since { push @SEEN => [ deployed_changes_since => $_[1] ]; @deployed_changes }
+    sub mock_check_deploy  { shift; push @SEEN => [ check_deploy_dependencies => [@_] ] }
+    sub mock_check_revert  { shift; push @SEEN => [ check_revert_dependencies => [@_] ] }
     sub begin_work         { push @SEEN => ['begin_work']  if $record_work }
     sub finish_work        { push @SEEN => ['finish_work'] if $record_work }
     sub _update_ids        { push @SEEN => ['_update_ids']; $updated_idx }
+    sub log_new_tags       { push @SEEN => [ log_new_tags => $_[1] ]; $_[0] }
 
     sub seen { [@SEEN] }
     after seen => sub { @SEEN = () };
@@ -86,8 +91,11 @@ ENGINE: {
 
 ok my $sqitch = App::Sqitch->new(
     db_name => 'mydb',
+    top_dir   => dir( qw(t sql) ),
     plan_file => file qw(t plans multi.plan)
 ), 'Load a sqitch sqitch object';
+
+my $mock_engine = Test::MockModule->new($CLASS);
 
 ##############################################################################
 # Test new().
@@ -183,8 +191,10 @@ for my $abs (qw(
     log_deploy_change
     log_fail_change
     log_revert_change
+    log_new_tags
     is_deployed_tag
     is_deployed_change
+    are_deployed_changes
     change_id_for
     changes_requiring_change
     earliest_change_id
@@ -210,7 +220,7 @@ ok $engine = App::Sqitch::Engine::whu->new( sqitch => $sqitch ),
     'Create a subclass name object again';
 can_ok $engine, 'deploy_change', 'revert_change';
 
-my $change = App::Sqitch::Plan::Change->new( name => 'foo', plan => $sqitch->plan );
+my $change = App::Sqitch::Plan::Change->new( name => 'users', plan => $sqitch->plan );
 
 ok $engine->deploy_change($change), 'Deploy a change';
 is_deeply $engine->seen, [
@@ -219,9 +229,54 @@ is_deeply $engine->seen, [
     [log_deploy_change => $change ],
     ['finish_work'],
 ], 'deploy_change should have called the proper methods';
-is_deeply +MockOutput->get_info, [[
-    '  + ', 'foo'
+is_deeply +MockOutput->get_info_literal, [[
+    '  + users ..', '' , ' '
 ]], 'Output should reflect the deployment';
+is_deeply +MockOutput->get_info, [[__ 'ok' ]],
+    'Output should reflect success';
+
+# Have it log only.
+ok $engine->deploy_change($change, 1), 'Only log a change';
+is_deeply $engine->seen, [
+    ['begin_work'],
+    [log_deploy_change => $change ],
+    ['finish_work'],
+], 'log-only deploy_change should not have called run_file';
+is_deeply +MockOutput->get_info_literal, [[
+    '  + users ..', '' , ' '
+]], 'Output should reflect the logging';
+is_deeply +MockOutput->get_info, [[__ 'ok' ]],
+    'Output should reflect deploy success';
+
+# Have it verify.
+ok $engine->with_verify(1), 'Enable verification';
+ok $engine->deploy_change($change), 'Deploy a change to be verified';
+is_deeply $engine->seen, [
+    ['begin_work'],
+    [run_file => $change->deploy_file ],
+    [run_file => $change->verify_file ],
+    [log_deploy_change => $change ],
+    ['finish_work'],
+], 'deploy_change with verification should run the verify file';
+is_deeply +MockOutput->get_info_literal, [[
+    '  + users ..', '' , ' '
+]], 'Output should reflect the logging';
+is_deeply +MockOutput->get_info, [[__ 'ok' ]],
+    'Output should reflect deploy success';
+
+# Have it verify *and* log-only.
+ok $engine->deploy_change($change, 1), 'Verify and log a change';
+is_deeply $engine->seen, [
+    ['begin_work'],
+    [run_file => $change->verify_file ],
+    [log_deploy_change => $change ],
+    ['finish_work'],
+], 'deploy_change with verification and log-only should not run deploy';
+is_deeply +MockOutput->get_info_literal, [[
+    '  + users ..', '' , ' '
+]], 'Output should reflect the logging';
+is_deeply +MockOutput->get_info, [[__ 'ok' ]],
+    'Output should reflect deploy success';
 
 # Make it fail.
 $die = 'run_file';
@@ -234,21 +289,81 @@ is_deeply $engine->seen, [
     ['finish_work'],
 ], 'Should have logged change failure';
 $die = '';
-is_deeply +MockOutput->get_info, [[
-    '  + ', 'foo'
+is_deeply +MockOutput->get_info_literal, [[
+    '  + users ..', '' , ' '
 ]], 'Output should reflect the deployment, even with failure';
+is_deeply +MockOutput->get_info, [[__ 'not ok' ]],
+    'Output should reflect deploy failure';
+
+# Make the verify fail.
+$mock_engine->mock( verify_change => sub { hurl 'WTF!' });
+throws_ok { $engine->deploy_change($change) } 'App::Sqitch::X',
+    'Deploy change with failed verification';
+is $@->message, 'Deploy failed', 'Error should be from deploy_change';
+is_deeply $engine->seen, [
+    ['begin_work'],
+    [run_file => $change->deploy_file ],
+    ['begin_work'],
+    [run_file => $change->revert_file ],
+    [log_fail_change => $change ],
+    ['finish_work'],
+], 'Should have logged verify failure';
+$die = '';
+is_deeply +MockOutput->get_info_literal, [[
+    '  + users ..', '' , ' '
+]], 'Output should reflect the deployment, even with verify failure';
+is_deeply +MockOutput->get_info, [[__ 'not ok' ]],
+    'Output should reflect deploy failure';
+is_deeply +MockOutput->get_vent, [['WTF!']],
+    'Verify error should have been vented';
+
+# Try a change with no verify file.
+$mock_engine->unmock( 'verify_change' );
+$change = App::Sqitch::Plan::Change->new( name => 'foo', plan => $sqitch->plan );
+ok $engine->deploy_change($change), 'Deploy a change with no verify script';
+is_deeply $engine->seen, [
+    ['begin_work'],
+    [run_file => $change->deploy_file ],
+    [log_deploy_change => $change ],
+    ['finish_work'],
+], 'deploy_change with no verify file should not run it';
+is_deeply +MockOutput->get_info_literal, [[
+    '  + foo ..', '' , ' '
+]], 'Output should reflect the logging';
+is_deeply +MockOutput->get_info, [[__ 'ok' ]],
+    'Output should reflect deploy success';
+is_deeply +MockOutput->get_vent, [
+    [__x 'Verify script {file} does not exist', file => $change->verify_file],
+], 'A warning about no verify file should have been emitted';
+
+# Alright, disable verify now.
+$engine->with_verify(0);
 
 ok $engine->revert_change($change), 'Revert a change';
 is_deeply $engine->seen, [
     ['begin_work'],
-    [changes_requiring_change => $change ],
     [run_file => $change->revert_file ],
     [log_revert_change => $change ],
     ['finish_work'],
 ], 'revert_change should have called the proper methods';
-is_deeply +MockOutput->get_info, [[
-    '  - ', 'foo'
+is_deeply +MockOutput->get_info_literal, [[
+    '  - foo ..', '', ' '
 ]], 'Output should reflect reversion';
+is_deeply +MockOutput->get_info, [[__ 'ok']],
+    'Output should acknowldge revert success';
+
+# Revert with log-only.
+ok $engine->revert_change($change, 1), 'Revert a change with log-only';
+is_deeply $engine->seen, [
+    ['begin_work'],
+    [log_revert_change => $change ],
+    ['finish_work'],
+], 'Log-only revert_change should not have run the change script';
+is_deeply +MockOutput->get_info_literal, [[
+    '  - foo ..', '', ' '
+]], 'Output should reflect logged reversion';
+is_deeply +MockOutput->get_info, [[__ 'ok']],
+    'Output should acknowldge revert success';
 $record_work = 0;
 
 ##############################################################################
@@ -256,7 +371,7 @@ $record_work = 0;
 chdir 't';
 my $plan_file = file qw(sql sqitch.plan);
 my $sqitch_old = $sqitch; # Hang on to this because $change does not retain it.
-$sqitch = App::Sqitch->new( plan_file => $plan_file );
+$sqitch = App::Sqitch->new( plan_file => $plan_file, top_dir => dir 'sql' );
 ok $engine = App::Sqitch::Engine::whu->new( sqitch => $sqitch ),
     'Engine with sqitch with plan file';
 my $plan = $sqitch->plan;
@@ -311,8 +426,11 @@ $updated_idx = 2;
 ok $engine->_sync_plan, 'Sync the plan to a tag';
 is $plan->position, 2, 'Plan should now be at position 1';
 is $engine->start_at, 'widgets@beta', 'start_at should now be widgets@beta';
-is_deeply $engine->seen, [['latest_change_id', undef], ['_update_ids']],
-    'Should have updated IDs';
+is_deeply $engine->seen, [
+    ['latest_change_id', undef],
+    ['_update_ids'],
+    ['log_new_tags' => $plan->change_at(2)],
+], 'Should have updated IDs';
 
 ##############################################################################
 # Test deploy.
@@ -323,7 +441,6 @@ $engine->seen;
 @changes = $plan->changes;
 
 # Mock the deploy methods to log which were called.
-my $mock_engine = Test::MockModule->new($CLASS);
 my $deploy_meth;
 for my $meth (qw(_deploy_all _deploy_by_tag _deploy_by_change)) {
     my $orig = $CLASS->can($meth);
@@ -333,6 +450,14 @@ for my $meth (qw(_deploy_all _deploy_by_tag _deploy_by_change)) {
     });
 }
 
+# Mock dependency checking to add its call to the seen stuff.
+$mock_engine->mock( check_deploy_dependencies => sub {
+    shift->mock_check_deploy(@_);
+});
+$mock_engine->mock( check_revert_dependencies => sub {
+    shift->mock_check_revert(@_);
+});
+
 ok $engine->deploy('@alpha'), 'Deploy to @alpha';
 is $plan->position, 1, 'Plan should be at position 1';
 is_deeply $engine->seen, [
@@ -340,6 +465,7 @@ is_deeply $engine->seen, [
     'initialized',
     'initialize',
     'register_project',
+    [check_deploy_dependencies => [$plan, 1]],
     [run_file => $changes[0]->deploy_file],
     [log_deploy_change => $changes[0]],
     [run_file => $changes[1]->deploy_file],
@@ -355,9 +481,48 @@ is_deeply +MockOutput->get_info, [
         destination =>  $engine->destination,
         target      => $plan->get('@alpha')->format_name_with_tags,
     ],
-    ['  + ', 'roles'],
-    ['  + ', 'users @alpha'],
+    [__ 'ok'],
+    [__ 'ok'],
 ], 'Should have seen the output of the deploy to @alpha';
+is_deeply +MockOutput->get_info_literal, [
+    ['  + roles ..', '.......', ' '],
+    ['  + users @alpha ..', '', ' '],
+], 'Both change names should be output';
+
+# Try with log-only in all modes.
+for my $mode (qw(change tag all)) {
+    ok $engine->deploy('@alpha', $mode, 1), 'Log-only deploy in $mode mode to @alpha';
+    is $plan->position, 1, 'Plan should be at position 1';
+    is_deeply $engine->seen, [
+        [latest_change_id => undef],
+        'initialized',
+        'initialize',
+        'register_project',
+        [check_deploy_dependencies => [$plan, 1]],
+        [log_deploy_change => $changes[0]],
+        [log_deploy_change => $changes[1]],
+    ], 'Should have deployed through @alpha without running files';
+
+    my $meth = $mode eq 'all' ? 'all' : ('by_' . $mode);
+    is $deploy_meth, "_deploy_$meth", "Should have called _deploy_$meth()";
+    is_deeply +MockOutput->get_info, [
+        [
+            __x 'Adding metadata tables to {destination}',
+            destination => $engine->destination,
+        ],
+        [
+            __x 'Deploying changes through {target} to {destination}',
+            destination =>  $engine->destination,
+            target      => $plan->get('@alpha')->format_name_with_tags,
+        ],
+        [__ 'ok'],
+        [__ 'ok'],
+    ], 'Should have seen the output of the deploy to @alpha';
+    is_deeply +MockOutput->get_info_literal, [
+        ['  + roles ..', '.......', ' '],
+        ['  + users @alpha ..', '', ' '],
+    ], 'Both change names should be output';
+}
 
 # Try with no need to initialize.
 $initialized = 1;
@@ -368,6 +533,7 @@ is_deeply $engine->seen, [
     [latest_change_id => undef],
     'initialized',
     'register_project',
+    [check_deploy_dependencies => [$plan, 1]],
     [run_file => $changes[0]->deploy_file],
     [log_deploy_change => $changes[0]],
     [run_file => $changes[1]->deploy_file],
@@ -380,9 +546,13 @@ is_deeply +MockOutput->get_info, [
         destination =>  $engine->destination,
         target      => $plan->get('@alpha')->format_name_with_tags,
     ],
-    ['  + ', 'roles'],
-    ['  + ', 'users @alpha'],
+    [__ 'ok'],
+    [__ 'ok'],
 ], 'Should have seen the output of the deploy to @alpha';
+is_deeply +MockOutput->get_info_literal, [
+    ['  + roles ..', '.......', ' '],
+    ['  + users @alpha ..', '', ' '],
+], 'Both change names should be output';
 
 # Try a bogus target.
 throws_ok { $engine->deploy('nonexistent') } 'App::Sqitch::X',
@@ -400,6 +570,7 @@ $latest_change_id = ($changes[1]->tags)[0]->id;
 ok $engine->deploy('@alpha'), 'Deploy to alpha thrice';
 is_deeply $engine->seen, [
     [latest_change_id => undef],
+    ['log_new_tags' => $changes[1]],
 ], 'Only latest_item() should have been called';
 is_deeply +MockOutput->get_info, [
     [__x 'Nothing to deploy (already at "{target}"', target => '@alpha'],
@@ -414,6 +585,7 @@ is $@->message,  __ 'Cannot deploy to an earlier target; use "revert" instead',
     'It should suggest using "revert"';
 is_deeply $engine->seen, [
     [latest_change_id => undef],
+    ['log_new_tags' => $changes[2]],
 ], 'Should have called latest_item() and latest_tag()';
 
 # Make sure we can deploy everything by change.
@@ -427,6 +599,7 @@ is_deeply $engine->seen, [
     [latest_change_id => undef],
     'initialized',
     'register_project',
+    [check_deploy_dependencies => [$plan, 3]],
     [run_file => $changes[0]->deploy_file],
     [log_deploy_change => $changes[0]],
     [run_file => $changes[1]->deploy_file],
@@ -440,10 +613,17 @@ is_deeply $engine->seen, [
 is $deploy_meth, '_deploy_by_change', 'Should have called _deploy_by_change()';
 is_deeply +MockOutput->get_info, [
     [__x 'Deploying changes to {destination}', destination =>  $engine->destination ],
-    ['  + ', 'roles'],
-    ['  + ', 'users @alpha'],
-    ['  + ', 'widgets @beta'],
-    ['  + ', 'lolz'],
+    [__ 'ok'],
+    [__ 'ok'],
+    [__ 'ok'],
+    [__ 'ok'],
+], 'Should have emitted deploy announcement and successes';
+
+is_deeply +MockOutput->get_info_literal, [
+    ['  + roles ..', '........', ' '],
+    ['  + users @alpha ..', '.', ' '],
+    ['  + widgets @beta ..', '', ' '],
+    ['  + lolz ..', '.........', ' '],
 ], 'Should have seen the output of the deploy to the end';
 
 # If we deploy again, it should be up-to-date.
@@ -469,6 +649,7 @@ is_deeply $engine->seen, [
     [latest_change_id => undef],
     'initialized',
     'register_project',
+    [check_deploy_dependencies => [$plan, 3]],
 ], 'It should have check for initialization';
 is_deeply +MockOutput->get_info, [
     [__x 'Deploying changes to {destination}', destination =>  $engine->destination ],
@@ -503,10 +684,12 @@ is_deeply $engine->seen, [
     [run_file => $changes[1]->deploy_file],
     [log_deploy_change => $changes[1]],
 ], 'Should changewise deploy to index 2';
-is_deeply +MockOutput->get_info, [
-    ['  + ', 'roles'],
-    ['  + ', 'users @alpha'],
+is_deeply +MockOutput->get_info_literal, [
+    ['  + roles ..', '', ' '],
+    ['  + users @alpha ..', '', ' '],
 ], 'Should have seen output of each change';
+is_deeply +MockOutput->get_info, [[__ 'ok' ], [__ 'ok']],
+    'Output should reflect deploy successes';
 
 ok $engine->_deploy_by_change($plan, 3), 'Deploy changewise to index 2';
 is_deeply $engine->seen, [
@@ -515,10 +698,12 @@ is_deeply $engine->seen, [
     [run_file => $changes[3]->deploy_file],
     [log_deploy_change => $changes[3]],
 ], 'Should changewise deploy to from index 2 to index 3';
-is_deeply +MockOutput->get_info, [
-    ['  + ', 'widgets @beta'],
-    ['  + ', 'lolz'],
+is_deeply +MockOutput->get_info_literal, [
+    ['  + widgets @beta ..', '', ' '],
+    ['  + lolz ..', '', ' '],
 ], 'Should have seen output of changes 2-3';
+is_deeply +MockOutput->get_info, [[__ 'ok' ], [__ 'ok']],
+    'Output should reflect deploy successes';
 
 # Make it die.
 $plan->reset;
@@ -529,9 +714,11 @@ is $@->message, 'AAAH!', 'It should have died in run_file';
 is_deeply $engine->seen, [
     [log_fail_change => $changes[0] ],
 ], 'It should have logged the failure';
-is_deeply +MockOutput->get_info, [
-    ['  + ', 'roles'],
+is_deeply +MockOutput->get_info_literal, [
+    ['  + roles ..', '', ' '],
 ], 'Should have seen output for first change';
+is_deeply +MockOutput->get_info, [[__ 'not ok']],
+    'Output should reflect deploy failure';
 $die = '';
 
 ##############################################################################
@@ -546,10 +733,12 @@ is_deeply $engine->seen, [
     [run_file => $changes[1]->deploy_file],
     [log_deploy_change => $changes[1]],
 ], 'Should tagwise deploy to index 1';
-is_deeply +MockOutput->get_info, [
-    ['  + ', 'roles'],
-    ['  + ', 'users @alpha'],
+is_deeply +MockOutput->get_info_literal, [
+    ['  + roles ..', '', ' '],
+    ['  + users @alpha ..', '', ' '],
 ], 'Should have seen output of each change';
+is_deeply +MockOutput->get_info, [[__ 'ok' ], [__ 'ok']],
+    'Output should reflect deploy successes';
 
 ok $engine->_deploy_by_tag($plan, 3), 'Deploy tagwise to index 3';
 is_deeply $engine->seen, [
@@ -558,10 +747,12 @@ is_deeply $engine->seen, [
     [run_file => $changes[3]->deploy_file],
     [log_deploy_change => $changes[3]],
 ], 'Should tagwise deploy from index 2 to index 3';
-is_deeply +MockOutput->get_info, [
-    ['  + ', 'widgets @beta'],
-    ['  + ', 'lolz'],
+is_deeply +MockOutput->get_info_literal, [
+    ['  + widgets @beta ..', '', ' '],
+    ['  + lolz ..', '', ' '],
 ], 'Should have seen output of changes 3-3';
+is_deeply +MockOutput->get_info, [[__ 'ok' ], [__ 'ok']],
+    'Output should reflect deploy successes';
 
 # Add another couple of changes.
 $plan->add(name => 'tacos' );
@@ -582,23 +773,28 @@ is_deeply $engine->seen, [
     [run_file => $changes[5]->deploy_file],
     [run_file => $changes[5]->revert_file],
     [log_fail_change => $changes[5] ],
-    [changes_requiring_change => $changes[4] ],
     [run_file => $changes[4]->revert_file],
     [log_revert_change => $changes[4]],
-    [changes_requiring_change => $changes[3] ],
     [run_file => $changes[3]->revert_file],
     [log_revert_change => $changes[3]],
 ], 'It should have reverted back to the last deployed tag';
 
+is_deeply +MockOutput->get_info_literal, [
+    ['  + widgets @beta ..', '', ' '],
+    ['  + lolz ..', '', ' '],
+    ['  + tacos ..', '', ' '],
+    ['  + curry ..', '', ' '],
+    ['  - tacos ..', '', ' '],
+    ['  - lolz ..', '', ' '],
+], 'Should have seen deploy and revert messages (excluding curry revert)';
 is_deeply +MockOutput->get_info, [
-    ['  + ', 'widgets @beta'],
-    ['  + ', 'lolz'],
-    ['  + ', 'tacos'],
-    ['  + ', 'curry'],
-    ['  - ', 'curry'],
-    ['  - ', 'tacos'],
-    ['  - ', 'lolz'],
-], 'Should have seen deploy and revert messages';
+    [__ 'ok' ],
+    [__ 'ok' ],
+    [__ 'ok' ],
+    [__ 'not ok' ],
+    [__ 'ok' ],
+    [__ 'ok' ],
+], 'Output should reflect deploy successes and failure';
 is_deeply +MockOutput->get_vent, [
     ['ROFL'],
     [__x 'Reverting to {target}', target => 'widgets @beta']
@@ -614,14 +810,18 @@ is $@->message, __('Deploy failed'), 'Should again get final deploy failure mess
 is_deeply $engine->seen, [
     [log_deploy_change => $changes[0]],
     [log_fail_change => $changes[1]],
-    [changes_requiring_change => $changes[0] ],
     [log_revert_change => $changes[0]],
 ], 'Should have logged back to the beginning';
-is_deeply +MockOutput->get_info, [
-    ['  + ', 'roles'],
-    ['  + ', 'users @alpha'],
-    ['  - ', 'roles'],
+is_deeply +MockOutput->get_info_literal, [
+    ['  + roles ..', '', ' '],
+    ['  + users @alpha ..', '', ' '],
+    ['  - roles ..', '', ' '],
 ], 'Should have seen deploy and revert messages';
+is_deeply +MockOutput->get_info, [
+    [__ 'ok' ],
+    [__ 'not ok' ],
+    [__ 'ok' ],
+], 'Output should reflect deploy successes and failure';
 my $vented = MockOutput->get_vent;
 is @{ $vented }, 2, 'Should have one vented message';
 my $errmsg = shift @{ $vented->[0] };
@@ -648,26 +848,35 @@ is_deeply $engine->seen, [
     [log_deploy_change => $changes[4]],
     [log_deploy_change => $changes[5]],
     [log_fail_change => $changes[6]],
-    [changes_requiring_change => $changes[5] ],
     [log_revert_change => $changes[5] ],
-    [changes_requiring_change => $changes[4] ],
     [log_revert_change => $changes[4] ],
-    [changes_requiring_change => $changes[3] ],
     [log_revert_change => $changes[3] ],
 ], 'Should have reverted back to last tag';
 
-is_deeply +MockOutput->get_info, [
-    ['  + ', 'roles'],
-    ['  + ', 'users @alpha'],
-    ['  + ', 'widgets @beta'],
-    ['  + ', 'lolz'],
-    ['  + ', 'tacos'],
-    ['  + ', 'curry'],
-    ['  + ', 'dr_evil'],
-    ['  - ', 'curry'],
-    ['  - ', 'tacos'],
-    ['  - ', 'lolz'],
+is_deeply +MockOutput->get_info_literal, [
+    ['  + roles ..', '', ' '],
+    ['  + users @alpha ..', '', ' '],
+    ['  + widgets @beta ..', '', ' '],
+    ['  + lolz ..', '', ' '],
+    ['  + tacos ..', '', ' '],
+    ['  + curry ..', '', ' '],
+    ['  + dr_evil ..', '', ' '],
+    ['  - curry ..', '', ' '],
+    ['  - tacos ..', '', ' '],
+    ['  - lolz ..', '', ' '],
 ], 'Should have user change reversion messages';
+is_deeply +MockOutput->get_info, [
+    [__ 'ok' ],
+    [__ 'ok' ],
+    [__ 'ok' ],
+    [__ 'ok' ],
+    [__ 'ok' ],
+    [__ 'ok' ],
+    [__ 'not ok' ],
+    [__ 'ok' ],
+    [__ 'ok' ],
+    [__ 'ok' ],
+], 'Output should reflect deploy successes and failure';
 is_deeply +MockOutput->get_vent, [
     ['ROFL'],
     [__x 'Reverting to {target}', target => 'widgets @beta']
@@ -688,13 +897,17 @@ is $@->message, __('Deploy failed'), 'Should once again get final deploy failure
 is_deeply $engine->seen, [
     [log_deploy_change => $changes[0] ],
     [log_fail_change => $changes[1] ],
-    [changes_requiring_change => $changes[0] ],
 ], 'Should have tried to revert one change';
-is_deeply +MockOutput->get_info, [
-    ['  + ', 'roles'],
-    ['  + ', 'users @alpha'],
-    ['  - ', 'roles'],
+is_deeply +MockOutput->get_info_literal, [
+    ['  + roles ..', '', ' '],
+    ['  + users @alpha ..', '', ' '],
+    ['  - roles ..', '', ' '],
 ], 'Should have seen revert message';
+is_deeply +MockOutput->get_info, [
+    [__ 'ok' ],
+    [__ 'not ok' ],
+    [__ 'not ok' ],
+], 'Output should reflect deploy successes and failure';
 is_deeply +MockOutput->get_vent, [
     ['ROFL'],
     [__x 'Reverting to {target}', target => 'whatever'],
@@ -715,19 +928,26 @@ is_deeply $engine->seen, [
     [run_file => $changes[1]->deploy_file],
     [log_deploy_change => $changes[1]],
 ], 'Should tagwise deploy to index 1';
-is_deeply +MockOutput->get_info, [
-    ['  + ', 'roles'],
-    ['  + ', 'users @alpha'],
+is_deeply +MockOutput->get_info_literal, [
+    ['  + roles ..', '', ' '],
+    ['  + users @alpha ..', '', ' '],
 ], 'Should have seen output of each change';
+is_deeply +MockOutput->get_info, [
+    [__ 'ok' ],
+    [__ 'ok' ],
+], 'Output should reflect deploy successes';
 
 ok $engine->_deploy_all($plan, 2), 'Deploy tagwise to index 2';
 is_deeply $engine->seen, [
     [run_file => $changes[2]->deploy_file],
     [log_deploy_change => $changes[2]],
 ], 'Should tagwise deploy to from index 1 to index 2';
-is_deeply +MockOutput->get_info, [
-    ['  + ', 'widgets @beta'],
+is_deeply +MockOutput->get_info_literal, [
+    ['  + widgets @beta ..', '', ' '],
 ], 'Should have seen output of changes 3-4';
+is_deeply +MockOutput->get_info, [
+    [__ 'ok' ],
+], 'Output should reflect deploy successe';
 
 # Make it die.
 $plan->reset;
@@ -742,22 +962,26 @@ is_deeply $engine->seen, [
     [run_file => $changes[2]->deploy_file],
     [run_file => $changes[2]->revert_file],
     [log_fail_change => $changes[2]],
-    [changes_requiring_change => $changes[1] ],
     [run_file => $changes[1]->revert_file],
     [log_revert_change => $changes[1]],
-    [changes_requiring_change => $changes[0] ],
     [run_file => $changes[0]->revert_file],
     [log_revert_change => $changes[0]],
 ], 'It should have logged up to the failure';
 
+is_deeply +MockOutput->get_info_literal, [
+    ['  + roles ..', '', ' '],
+    ['  + users @alpha ..', '', ' '],
+    ['  + widgets @beta ..', '', ' '],
+    ['  - users @alpha ..', '', ' '],
+    ['  - roles ..', '', ' '],
+], 'Should have seen deploy and revert messages excluding revert for failed logging';
 is_deeply +MockOutput->get_info, [
-    ['  + ', 'roles'],
-    ['  + ', 'users @alpha'],
-    ['  + ', 'widgets @beta'],
-    ['  - ', 'widgets @beta'],
-    ['  - ', 'users @alpha'],
-    ['  - ', 'roles'],
-], 'Should have seen deploy and revert messages';
+    [__ 'ok' ],
+    [__ 'ok' ],
+    [__ 'not ok' ],
+    [__ 'ok' ],
+    [__ 'ok' ],
+], 'Output should reflect deploy successes and failures';
 is_deeply +MockOutput->get_vent, [
     ['ROFL'],
     [__ 'Reverting all changes'],
@@ -774,18 +998,23 @@ is_deeply $engine->seen, [
     [log_deploy_change => $changes[0]],
     [log_deploy_change => $changes[1]],
     [log_fail_change => $changes[2]],
-    [changes_requiring_change => $changes[1] ],
     [log_revert_change => $changes[1]],
-    [changes_requiring_change => $changes[0] ],
     [log_revert_change => $changes[0]],
 ], 'Should have reveted all changes and tags';
-is_deeply +MockOutput->get_info, [
-    ['  + ', 'roles'],
-    ['  + ', 'users @alpha'],
-    ['  + ', 'widgets @beta'],
-    ['  - ', 'users @alpha'],
-    ['  - ', 'roles'],
+is_deeply +MockOutput->get_info_literal, [
+    ['  + roles ..', '', ' '],
+    ['  + users @alpha ..', '', ' '],
+    ['  + widgets @beta ..', '', ' '],
+    ['  - users @alpha ..', '', ' '],
+    ['  - roles ..', '', ' '],
 ], 'Should see all changes revert';
+is_deeply +MockOutput->get_info, [
+    [__ 'ok' ],
+    [__ 'ok' ],
+    [__ 'not ok' ],
+    [__ 'ok' ],
+    [__ 'ok' ],
+], 'Output should reflect deploy successes and failures';
 is_deeply +MockOutput->get_vent, [
     ['ROFL'],
     [__ 'Reverting all changes'],
@@ -803,23 +1032,29 @@ is_deeply $engine->seen, [
     [log_deploy_change => $changes[4]],
     [log_deploy_change => $changes[5]],
     [log_fail_change => $changes[6]],
-    [changes_requiring_change => $changes[5] ],
     [log_revert_change => $changes[5]],
-    [changes_requiring_change => $changes[4] ],
     [log_revert_change => $changes[4]],
-    [changes_requiring_change => $changes[3] ],
     [log_revert_change => $changes[3]],
 ], 'Should have deployed to dr_evil and revered down to @alpha';
 
-is_deeply +MockOutput->get_info, [
-    ['  + ', 'lolz'],
-    ['  + ', 'tacos'],
-    ['  + ', 'curry'],
-    ['  + ', 'dr_evil'],
-    ['  - ', 'curry'],
-    ['  - ', 'tacos'],
-    ['  - ', 'lolz'],
+is_deeply +MockOutput->get_info_literal, [
+    ['  + lolz ..', '', ' '],
+    ['  + tacos ..', '', ' '],
+    ['  + curry ..', '', ' '],
+    ['  + dr_evil ..', '', ' '],
+    ['  - curry ..', '', ' '],
+    ['  - tacos ..', '', ' '],
+    ['  - lolz ..', '', ' '],
 ], 'Should see changes revert back to @alpha';
+is_deeply +MockOutput->get_info, [
+    [__ 'ok' ],
+    [__ 'ok' ],
+    [__ 'ok' ],
+    [__ 'not ok' ],
+    [__ 'ok' ],
+    [__ 'ok' ],
+    [__ 'ok' ],
+], 'Output should reflect deploy successes and failures';
 is_deeply +MockOutput->get_vent, [
     ['ROFL'],
     [__x 'Reverting to {target}', target => '@alpha'],
@@ -852,9 +1087,12 @@ is_deeply $engine->seen, [
     [run_file => $change->deploy_file],
     [log_deploy_change => $change],
 ], 'It should have been deployed';
-is_deeply +MockOutput->get_info, [
-    ['  + ', $change->format_name]
+is_deeply +MockOutput->get_info_literal, [
+    ['  + foo ..', '', ' ']
 ], 'Should have shown change name';
+is_deeply +MockOutput->get_info, [
+    [__ 'ok' ],
+], 'Output should reflect deploy success';
 
 my $make_deps = sub {
     my $conflicts = shift;
@@ -862,97 +1100,12 @@ my $make_deps = sub {
         my $dep = App::Sqitch::Plan::Depend->new(
             change    => $_,
             plan      => $plan,
+            project   => $plan->project,
             conflicts => $conflicts,
         );
         $dep;
     } @_;
 };
-
-CONFLICTS: {
-    # Die on conflicts.
-    my $mock_depend = Test::MockModule->new('App::Sqitch::Plan::Depend');
-    $mock_depend->mock(id => sub { undef });
-
-    my @conflicts = $make_deps->( 1, qw(foo bar) );
-    my $change = App::Sqitch::Plan::Change->new(
-        name      => 'foo',
-        plan      => $sqitch->plan,
-        conflicts => \@conflicts,
-    );
-    push @resolved, '2342', '253245';
-    throws_ok { $engine->deploy_change($change) } 'App::Sqitch::X',
-        'Conflict should throw exception';
-    is $@->ident, 'deploy', 'Should be a "deploy" error';
-    is $@->message, __nx(
-        'Conflicts with previously deployed change: {changes}',
-        'Conflicts with previously deployed changes: {changes}',
-        scalar 2,
-        changes => 'foo bar',
-    ), 'Should have localized message about conflicts';
-
-    is_deeply $engine->seen, [
-        [ change_id_for => {
-            change_id => undef,
-            change    => 'foo',
-            tag       => undef,
-            project   => 'sql',
-        } ],
-        [ change_id_for => {
-            change_id => undef,
-            change    => 'bar',
-            tag       => undef,
-            project   => 'sql',
-        } ],
-    ], 'Should have called change_id_for() twice';
-    is_deeply +MockOutput->get_info, [
-        ['  + ', $change->format_name]
-    ], 'Should again have shown change name';
-    is_deeply [ map { $_->resolved_id } @conflicts ], [undef, undef],
-        'Conflicting dependencies should have no resolved IDs';
-}
-
-REQUIRES: {
-    # Die on missing dependencies.
-    my $mock_depend = Test::MockModule->new('App::Sqitch::Plan::Depend');
-    $mock_depend->mock(id => sub { undef });
-
-    my @requires = $make_deps->( 0, qw(foo bar) );
-    my $change = App::Sqitch::Plan::Change->new(
-        name      => 'foo',
-        plan      => $sqitch->plan,
-        requires  => \@requires,
-    );
-    push @resolved, undef, undef;
-    throws_ok { $engine->deploy_change($change) } 'App::Sqitch::X',
-        'Missing dependencies should throw exception';
-    is $@->ident, 'deploy', 'Should be another "deploy" error';
-    is $@->message, __nx(
-        'Missing required change: {changes}',
-        'Missing required changes: {changes}',
-        scalar 2,
-        changes => 'foo bar',
-    ), 'Should have localized message missing dependencies';
-
-    is_deeply $engine->seen, [
-        [ change_id_for => {
-            change_id => undef,
-            change    => 'foo',
-            tag       => undef,
-            project   => 'sql',
-        } ],
-        [ change_id_for => {
-            change_id => undef,
-            change    => 'bar',
-            tag       => undef,
-            project   => 'sql',
-        } ],
-    ], 'Should have called check_requires';
-    is_deeply +MockOutput->get_info, [
-        ['  + ', $change->format_name]
-    ], 'Should again have shown change name';
-    is_deeply [ map { $_->resolved_id } @requires ], [undef, undef],
-        'Missing requirements should not have resolved';
-}
 
 DEPLOYDIE: {
     my $mock_depend = Test::MockModule->new('App::Sqitch::Plan::Depend');
@@ -968,29 +1121,10 @@ DEPLOYDIE: {
         requires  => \@requires,
         conflicts => \@conflicts,
     );
-    @resolved = (0, '232213', '2352354');
     throws_ok { $engine->deploy_change($change) } 'App::Sqitch::X',
         'Shuld die on deploy failure';
     is $@->message, __ 'Deploy failed', 'Should be told the deploy failed';
     is_deeply $engine->seen, [
-        [ change_id_for => {
-            change_id => undef,
-            change    => 'dr_evil',
-            tag       => undef,
-            project   => 'sql',
-        } ],
-        [ change_id_for => {
-            change_id => undef,
-            change    => 'foo',
-            tag       => undef,
-            project   => 'sql',
-        } ],
-        [ change_id_for => {
-            change_id => undef,
-            change    => 'bar',
-            tag       => undef,
-            project   => 'sql',
-        } ],
         [run_file => $change->deploy_file],
         [run_file => $change->revert_file],
         [log_fail_change => $change],
@@ -998,14 +1132,12 @@ DEPLOYDIE: {
     is_deeply +MockOutput->get_vent, [
         ['AAAH!'],
     ], 'Should have vented the original error';
-    is_deeply +MockOutput->get_info, [
-        ['  + ', $change->format_name],
-        ['  - ', $change->format_name],
+    is_deeply +MockOutput->get_info_literal, [
+        ['  + foo ..', '', ' '],
     ], 'Should have shown change name';
-    is_deeply [ map { $_->resolved_id } @conflicts ], [undef],
-        'Non-conflicting dependency should not have resolved';
-    is_deeply [ map { $_->resolved_id } @requires ], ['232213', '2352354'],
-        'Satisffied requirements should have resolved';
+        is_deeply +MockOutput->get_info, [
+            [__ 'not ok' ],
+        ], 'Output should reflect deploy failure';
     $die = '';
 }
 
@@ -1014,47 +1146,15 @@ DEPLOYDIE: {
 can_ok $engine, 'revert_change';
 ok $engine->revert_change($change), 'Revert the change';
 is_deeply $engine->seen, [
-    [changes_requiring_change => $change ],
     [run_file => $change->revert_file],
     [log_revert_change => $change],
 ], 'It should have been reverted';
-is_deeply +MockOutput->get_info, [
-    ['  - ', $change->format_name]
+is_deeply +MockOutput->get_info_literal, [
+    ['  - foo ..', '', ' ']
 ], 'Should have shown reverted change name';
-
-# Have revert change fail with requiring changes.
-@requiring = (
-    {
-        change_id => '23234234',
-        change    => 'blah',
-        project   => 'empty',
-        asof_tag  => undef,
-    },
-    {
-        change_id => '635462345',
-        change    => 'urf',
-        project   => 'elsewhere',
-        asof_tag  => '@beta1',
-    },
-);
-
-throws_ok { $engine->revert_change($change) } 'App::Sqitch::X',
-    'Should get error reverting change others depend on';
-is $@->ident, 'revert', 'Dependent error ident should be "revert"';
-is $@->message, __nx(
-    'Required by currently deployed change: {changes}',
-    'Required by currently deployed changes: {changes}',
-    scalar 2,
-    changes => 'blah elsewhere:urf@beta1'
-), 'Dependent error message should be correct';
-is_deeply $engine->seen, [
-    [changes_requiring_change => $change ],
-], 'It should have check for requiring changes';
 is_deeply +MockOutput->get_info, [
-    ['  - ', $change->format_name]
-], 'Should have shown attempted revert change name';
-
-@requiring = ();
+    [__ 'ok'],
+], 'And the revert failure should be "ok"';
 
 ##############################################################################
 # Test revert().
@@ -1158,6 +1258,12 @@ is_deeply $engine->seen, [
     [deployed_changes => undef],
 ], 'Should have called deployed_changes';
 
+# Mock App::Sqitch::DateTime so that dbchange tags all have the same
+# timestamps.
+my $mock_dt = Test::MockModule->new('App::Sqitch::DateTime');
+my $now = App::Sqitch::DateTime->now;
+$mock_dt->mock(now => $now);
+
 # Now revert from a deployed change.
 my @dbchanges;
 @deployed_changes = map {
@@ -1187,16 +1293,13 @@ MockOutput->ask_y_n_returns(1);
 ok $engine->revert, 'Revert all changes';
 is_deeply $engine->seen, [
     [deployed_changes => undef],
-    [changes_requiring_change => $dbchanges[3] ],
+    [check_revert_dependencies => [reverse @dbchanges[0..3]] ],
     [run_file => $dbchanges[3]->revert_file ],
     [log_revert_change => $dbchanges[3] ],
-    [changes_requiring_change => $dbchanges[2] ],
     [run_file => $dbchanges[2]->revert_file ],
     [log_revert_change => $dbchanges[2] ],
-    [changes_requiring_change => $dbchanges[1] ],
     [run_file => $dbchanges[1]->revert_file ],
     [log_revert_change => $dbchanges[1] ],
-    [changes_requiring_change => $dbchanges[0] ],
     [run_file => $dbchanges[0]->revert_file ],
     [log_revert_change => $dbchanges[0] ],
 ], 'Should have reverted the changes in reverse order';
@@ -1205,13 +1308,49 @@ is_deeply +MockOutput->get_ask_y_n, [
         'Revert all changes from {destination}?',
         destination => $engine->destination,
     ), 'Yes'],
-], 'Should have prompt to revert all changes';
-is_deeply +MockOutput->get_info, [
-    ['  - ', 'lolz'],
-    ['  - ', 'widgets @beta'],
-    ['  - ', 'users @alpha'],
-    ['  - ', 'roles'],
+], 'Should have prompted to revert all changes';
+is_deeply +MockOutput->get_info_literal, [
+    ['  - lolz ..', '.........', ' '],
+    ['  - widgets @beta ..', '', ' '],
+    ['  - users @alpha ..', '.', ' '],
+    ['  - roles ..', '........', ' '],
 ], 'It should have said it was reverting all changes and listed them';
+is_deeply +MockOutput->get_info, [
+    [__ 'ok'],
+    [__ 'ok'],
+    [__ 'ok'],
+    [__ 'ok'],
+], 'And the revert successes should be emitted';
+
+# Try with log-only.
+ok $engine->revert(undef, 1), 'Revert all changes log-only';
+delete $_->{_path_segments} for @dbchanges; # These need to be invisible.
+is_deeply $engine->seen, [
+    [deployed_changes => undef],
+    [check_revert_dependencies => [reverse @dbchanges[0..3]] ],
+    [log_revert_change => $dbchanges[3] ],
+    [log_revert_change => $dbchanges[2] ],
+    [log_revert_change => $dbchanges[1] ],
+    [log_revert_change => $dbchanges[0] ],
+], 'Log-only Should have reverted the changes in reverse order';
+is_deeply +MockOutput->get_ask_y_n, [
+    [__x(
+        'Revert all changes from {destination}?',
+        destination => $engine->destination,
+    ), 'Yes'],
+], 'Log-only should have prompted to revert all changes';
+is_deeply +MockOutput->get_info_literal, [
+    ['  - lolz ..', '.........', ' '],
+    ['  - widgets @beta ..', '', ' '],
+    ['  - users @alpha ..', '.', ' '],
+    ['  - roles ..', '........', ' '],
+], 'It should have said it was reverting all changes and listed them';
+is_deeply +MockOutput->get_info, [
+    [__ 'ok'],
+    [__ 'ok'],
+    [__ 'ok'],
+    [__ 'ok'],
+], 'And the revert successes should be emitted';
 
 # Should exit if the revert is declined.
 MockOutput->ask_y_n_returns(0);
@@ -1238,30 +1377,33 @@ $mock_engine->mock( no_prompt => sub { $no_prompt } );
 ok $engine->revert, 'Revert all changes with no prompt';
 is_deeply $engine->seen, [
     [deployed_changes => undef],
-    [changes_requiring_change => $dbchanges[3] ],
+    [check_revert_dependencies => [reverse @dbchanges[0..3]] ],
     [run_file => $dbchanges[3]->revert_file ],
     [log_revert_change => $dbchanges[3] ],
-    [changes_requiring_change => $dbchanges[2] ],
     [run_file => $dbchanges[2]->revert_file ],
     [log_revert_change => $dbchanges[2] ],
-    [changes_requiring_change => $dbchanges[1] ],
     [run_file => $dbchanges[1]->revert_file ],
     [log_revert_change => $dbchanges[1] ],
-    [changes_requiring_change => $dbchanges[0] ],
     [run_file => $dbchanges[0]->revert_file ],
     [log_revert_change => $dbchanges[0] ],
 ], 'Should have reverted the changes in reverse order';
 is_deeply +MockOutput->get_ask_y_n, [], 'Should have no prompt';
+is_deeply +MockOutput->get_info_literal, [
+    ['  - lolz ..', '.........', ' '],
+    ['  - widgets @beta ..', '', ' '],
+    ['  - users @alpha ..', '.', ' '],
+    ['  - roles ..', '........', ' '],
+], 'It should have said it was reverting all changes and listed them';
 is_deeply +MockOutput->get_info, [
     [__x(
         'Reverting all changes from {destination}',
         destination => $engine->destination,
     )],
-    ['  - ', 'lolz'],
-    ['  - ', 'widgets @beta'],
-    ['  - ', 'users @alpha'],
-    ['  - ', 'roles'],
-], 'It should have said it was reverting all changes and listed them';
+    [__ 'ok'],
+    [__ 'ok'],
+    [__ 'ok'],
+    [__ 'ok'],
+], 'And the revert successes should be emitted';
 
 # Now just revert to an earlier change.
 $no_prompt = 0;
@@ -1274,10 +1416,9 @@ is_deeply $engine->seen, [
     [change_id_for => { change_id => undef, change => '', tag => 'alpha', project => 'sql' }],
     [ change_offset_from_id => [$dbchanges[1]->id, 0] ],
     [deployed_changes_since => $dbchanges[1]],
-    [changes_requiring_change => $dbchanges[3] ],
+    [check_revert_dependencies => [reverse @dbchanges[2..3]] ],
     [run_file => $dbchanges[3]->revert_file ],
     [log_revert_change => $dbchanges[3] ],
-    [changes_requiring_change => $dbchanges[2] ],
     [run_file => $dbchanges[2]->revert_file ],
     [log_revert_change => $dbchanges[2] ],
 ], 'Should have reverted only changes after @alpha';
@@ -1288,10 +1429,14 @@ is_deeply +MockOutput->get_ask_y_n, [
         target      => $dbchanges[1]->format_name_with_tags,
     ), 'Yes'],
 ], 'Should have prompt to revert to target';
-is_deeply +MockOutput->get_info, [
-    ['  - ', 'lolz'],
-    ['  - ', 'widgets @beta'],
+is_deeply +MockOutput->get_info_literal, [
+    ['  - lolz ..', '.........', ' '],
+    ['  - widgets @beta ..', '', ' '],
 ], 'Output should show what it reverts to';
+is_deeply +MockOutput->get_info, [
+    [__ 'ok'],
+    [__ 'ok'],
+], 'And the revert successes should be emitted';
 
 MockOutput->ask_y_n_returns(0);
 $offset_change = $dbchanges[1];
@@ -1327,19 +1472,22 @@ is_deeply $engine->seen, [
     [change_id_for => { change_id => undef, change => '', tag => 'HEAD', project => 'sql' }],
     [change_offset_from_id => [$dbchanges[-1]->id, -1] ],
     [deployed_changes_since => $dbchanges[-1]],
-    [changes_requiring_change => $dbchanges[-1] ],
+    [check_revert_dependencies => [$dbchanges[-1]] ],
     [run_file => $dbchanges[-1]->revert_file ],
     [log_revert_change => $dbchanges[-1] ],
 ], 'Should have reverted one changes for @HEAD^';
 is_deeply +MockOutput->get_ask_y_n, [], 'Should have no prompt';
+is_deeply +MockOutput->get_info_literal, [
+    ['  - lolz ..', '', ' '],
+], 'Output should show what it reverts to';
 is_deeply +MockOutput->get_info, [
     [__x(
         'Reverting changes to {target} from {destination}',
         destination => $engine->destination,
         target      => $dbchanges[-1]->format_name_with_tags,
     )],
-    ['  - ', $dbchanges[-1]->format_name_with_tags],
-], 'Output should show what it reverts to';
+    [__ 'ok'],
+], 'And the header and "ok" should be emitted';
 
 ##############################################################################
 # Test change_id_for_depend().
@@ -1419,3 +1567,747 @@ is_deeply $engine->seen, [
     }],
     [change_offset_from_id => [ $dbchanges[1]->id, 1 ]],
 ], 'Project and offset should have been passed off';
+
+##############################################################################
+# Test verify_change().
+can_ok $CLASS, 'verify_change';
+$change = App::Sqitch::Plan::Change->new( name => 'users', plan => $sqitch->plan );
+ok $engine->verify_change($change), 'Verify a change';
+is_deeply $engine->seen, [
+    [run_file => $change->verify_file ],
+], 'The change file should have been run';
+is_deeply +MockOutput->get_info, [], 'Should have no info output';
+
+# Try a change with no verify script.
+$change = App::Sqitch::Plan::Change->new( name => 'roles', plan => $sqitch->plan );
+ok $engine->verify_change($change), 'Verify a change with no verify script.';
+is_deeply $engine->seen, [], 'No abstract methods should be called';
+is_deeply +MockOutput->get_info, [], 'Should have no info output';
+is_deeply +MockOutput->get_vent, [
+    [__x 'Verify script {file} does not exist', file => $change->verify_file],
+], 'A warning about no verify file should have been emitted';
+
+##############################################################################
+# Test check_deploy_dependenices().
+$mock_engine->unmock('check_deploy_dependencies');
+can_ok $engine, 'check_deploy_dependencies';
+
+CHECK_DEPLOY_DEPEND: {
+    # Make sure dependencies check out for all the existing changes.
+    $plan->reset;
+    ok $engine->check_deploy_dependencies($plan),
+        'All planned changes should be okay';
+    is_deeply $engine->seen, [
+        [ are_deployed_changes => [map { $plan->change_at($_) } 0..$plan->count - 1] ],
+    ], 'Should have called are_deployed_changes';
+
+    # Make sure it works when depending on a previous change.
+    my $change = $plan->change_at(3);
+    push @{ $change->_requires } => $make_deps->( 0, 'users' );
+    ok $engine->check_deploy_dependencies($plan),
+        'Dependencies should check out even when within those to be deployed';
+    is_deeply [ map { $_->resolved_id } map { $_->requires } $plan->changes ],
+        [ $plan->change_at(1)->id ],
+        'Resolved ID should be populated';
+
+    # Make sure it fails if there is a conflict within those to be deployed.
+    push @{ $change->_conflicts } => $make_deps->( 1, 'widgets' );
+    throws_ok { $engine->check_deploy_dependencies($plan) } 'App::Sqitch::X',
+        'Conflict should throw exception';
+    is $@->ident, 'deploy', 'Should be a "deploy" error';
+    is $@->message, __nx(
+        'Conflicts with previously deployed change: {changes}',
+        'Conflicts with previously deployed changes: {changes}',
+        scalar 1,
+        changes => 'widgets',
+    ), 'Should have localized message about the local conflict';
+    shift @{ $change->_conflicts };
+
+    # Now test looking stuff up in the database.
+    my $mock_depend = Test::MockModule->new('App::Sqitch::Plan::Depend');
+    my @depend_ids;
+    $mock_depend->mock(id => sub { shift @depend_ids });
+
+    my @conflicts = $make_deps->( 1, qw(foo bar) );
+    $change = App::Sqitch::Plan::Change->new(
+        name      => 'foo',
+        plan      => $sqitch->plan,
+        conflicts => \@conflicts,
+    );
+    $plan->_changes->append($change);
+
+    my $start_from = $plan->count - 1;
+    $plan->position( $start_from - 1);
+    push @resolved, '2342', '253245';
+    throws_ok { $engine->check_deploy_dependencies($plan, $start_from) } 'App::Sqitch::X',
+        'Conflict should throw exception';
+    is $@->ident, 'deploy', 'Should be a "deploy" error';
+    is $@->message, __nx(
+        'Conflicts with previously deployed change: {changes}',
+        'Conflicts with previously deployed changes: {changes}',
+        scalar 2,
+        changes => 'foo bar',
+    ), 'Should have localized message about conflicts';
+
+    is_deeply $engine->seen, [
+        [ are_deployed_changes => [map { $plan->change_at($_) } 0..$start_from-1] ],
+        [ change_id_for => {
+            change_id => undef,
+            change    => 'foo',
+            tag       => undef,
+            project   => 'sql',
+        } ],
+        [ change_id_for => {
+            change_id => undef,
+            change    => 'bar',
+            tag       => undef,
+            project   => 'sql',
+        } ],
+    ], 'Should have called change_id_for() twice';
+    is_deeply [ map { $_->resolved_id } @conflicts ], [undef, undef],
+        'Conflicting dependencies should have no resolved IDs';
+
+    # Fail with multiple conflicts.
+    push @{ $plan->change_at(3)->_conflicts } => $make_deps->( 1, 'widgets' );
+    $plan->reset;
+    push @depend_ids => $plan->change_at(2)->id;
+    push @resolved, '2342', '253245', '2323434';
+    throws_ok { $engine->check_deploy_dependencies($plan) } 'App::Sqitch::X',
+        'Conflict should throw another exception';
+    is $@->ident, 'deploy', 'Should be a "deploy" error';
+    is $@->message, __nx(
+        'Conflicts with previously deployed change: {changes}',
+        'Conflicts with previously deployed changes: {changes}',
+        scalar 3,
+        changes => 'widgets foo bar',
+    ), 'Should have localized message about all three conflicts';
+
+    is_deeply $engine->seen, [
+        [ change_id_for => {
+            change_id => undef,
+            change    => 'users',
+            tag       => undef,
+            project   => 'sql',
+        } ],
+        [ change_id_for => {
+            change_id => undef,
+            change    => 'foo',
+            tag       => undef,
+            project   => 'sql',
+        } ],
+        [ change_id_for => {
+            change_id => undef,
+            change    => 'bar',
+            tag       => undef,
+            project   => 'sql',
+        } ],
+    ], 'Should have called change_id_for() twice';
+    is_deeply [ map { $_->resolved_id } @conflicts ], [undef, undef],
+        'Conflicting dependencies should have no resolved IDs';
+
+    ##########################################################################
+    # Die on missing dependencies.
+    my @requires = $make_deps->( 0, qw(foo bar) );
+    $change = App::Sqitch::Plan::Change->new(
+        name      => 'blah',
+        plan      => $sqitch->plan,
+        requires  => \@requires,
+    );
+    $plan->_changes->append($change);
+    $start_from = $plan->count - 1;
+    $plan->position( $start_from - 1);
+
+    push @resolved, undef, undef;
+    throws_ok { $engine->check_deploy_dependencies($plan, $start_from) } 'App::Sqitch::X',
+        'Missing dependencies should throw exception';
+    is $@->ident, 'deploy', 'Should be another "deploy" error';
+    is $@->message, __nx(
+        'Missing required change: {changes}',
+        'Missing required changes: {changes}',
+        scalar 2,
+        changes => 'foo bar',
+    ), 'Should have localized message missing dependencies';
+
+    is_deeply $engine->seen, [
+        [ change_id_for => {
+            change_id => undef,
+            change    => 'foo',
+            tag       => undef,
+            project   => 'sql',
+        } ],
+        [ change_id_for => {
+            change_id => undef,
+            change    => 'bar',
+            tag       => undef,
+            project   => 'sql',
+        } ],
+    ], 'Should have called check_requires';
+    is_deeply [ map { $_->resolved_id } @requires ], [undef, undef],
+        'Missing requirements should not have resolved';
+
+    # Make sure we see both conflict and prereq failures.
+    push @resolved, '2342', '253245', '2323434', undef, undef;
+    $plan->reset;
+
+    throws_ok { $engine->check_deploy_dependencies($plan, $start_from) } 'App::Sqitch::X',
+        'Missing dependencies should throw exception';
+    is $@->ident, 'deploy', 'Should be another "deploy" error';
+    is $@->message, join(
+        $/,
+        __nx(
+            'Conflicts with previously deployed change: {changes}',
+            'Conflicts with previously deployed changes: {changes}',
+            scalar 3,
+            changes => 'widgets foo',
+        ),
+        __nx(
+            'Missing required change: {changes}',
+            'Missing required changes: {changes}',
+            scalar 2,
+            changes => 'foo bar',
+        ),
+    ), 'Should have localized conflicts and required error messages';
+
+    is_deeply $engine->seen, [
+        [ change_id_for => {
+            change_id => undef,
+            change    => 'widgets',
+            tag       => undef,
+            project   => 'sql',
+        } ],
+        [ change_id_for => {
+            change_id => undef,
+            change    => 'users',
+            tag       => undef,
+            project   => 'sql',
+        } ],
+        [ change_id_for => {
+            change_id => undef,
+            change    => 'foo',
+            tag       => undef,
+            project   => 'sql',
+        } ],
+        [ change_id_for => {
+            change_id => undef,
+            change    => 'bar',
+            tag       => undef,
+            project   => 'sql',
+        } ],
+        [ change_id_for => {
+            change_id => undef,
+            change    => 'foo',
+            tag       => undef,
+            project   => 'sql',
+        } ],
+        [ change_id_for => {
+            change_id => undef,
+            change    => 'bar',
+            tag       => undef,
+            project   => 'sql',
+        } ],
+    ], 'Should have called check_requires';
+    is_deeply [ map { $_->resolved_id } @requires ], [undef, undef],
+        'Missing requirements should not have resolved';
+}
+
+# Test revert dependency-checking.
+$mock_engine->unmock('check_revert_dependencies');
+can_ok $engine, 'check_revert_dependencies';
+
+CHECK_REVERT_DEPEND: {
+    my $change = App::Sqitch::Plan::Change->new(
+        name      => 'urfa',
+        id        => '24234234234e',
+        plan      => $plan,
+    );
+
+    # Have revert change fail with requiring changes.
+    my $req = {
+        change_id => '23234234',
+        change    => 'blah',
+        asof_tag  => undef,
+        project   => $plan->project,
+    };
+    @requiring = [$req];
+
+    throws_ok { $engine->check_revert_dependencies($change) } 'App::Sqitch::X',
+        'Should get error reverting change another depend on';
+    is $@->ident, 'revert', 'Dependent error ident should be "revert"';
+    is $@->message, __nx(
+        'Change "{change}" required by currently deployed change: {changes}',
+        'Change "{change}" required by currently deployed changes: {changes}',
+        1,
+        change  => 'urfa',
+        changes => 'blah'
+    ), 'Dependent error message should be correct';
+    is_deeply $engine->seen, [
+        [changes_requiring_change => $change ],
+    ], 'It should have check for requiring changes';
+
+    # Add a second requiring change.
+    my $req2 = {
+        change_id => '99999',
+        change    => 'harhar',
+        asof_tag  => '@foo',
+        project   => 'elsewhere',
+    };
+    @requiring = [$req, $req2];
+
+    throws_ok { $engine->check_revert_dependencies($change) } 'App::Sqitch::X',
+        'Should get error reverting change others depend on';
+    is $@->ident, 'revert', 'Dependent error ident should be "revert"';
+    is $@->message, __nx(
+        'Change "{change}" required by currently deployed change: {changes}',
+        'Change "{change}" required by currently deployed changes: {changes}',
+        2 ,
+        change  => 'urfa',
+        changes => 'blah elsewhere:harhar@foo'
+    ), 'Dependent error message should be correct';
+    is_deeply $engine->seen, [
+        [changes_requiring_change => $change ],
+    ], 'It should have check for requiring changes';
+
+    # Try it with two changes.
+    my $req3 = {
+        change_id => '94949494',
+        change    => 'frobisher',
+        project   => 'whu',
+    };
+    @requiring = ([$req, $req2], [$req3]);
+
+    my $change2 = App::Sqitch::Plan::Change->new(
+        name      => 'kazane',
+        id        => '8686868686',
+        plan      => $plan,
+    );
+
+    throws_ok { $engine->check_revert_dependencies($change, $change2) } 'App::Sqitch::X',
+        'Should get error reverting change others depend on';
+    is $@->ident, 'revert', 'Dependent error ident should be "revert"';
+    is $@->message, join(
+        $/,
+        __nx(
+            'Change "{change}" required by currently deployed change: {changes}',
+            'Change "{change}" required by currently deployed changes: {changes}',
+            2 ,
+            change  => 'urfa',
+            changes => 'blah elsewhere:harhar@foo'
+        ),
+        __nx(
+            'Change "{change}" required by currently deployed change: {changes}',
+            'Change "{change}" required by currently deployed changes: {changes}',
+            1,
+            change  => 'kazane',
+            changes => 'whu:frobisher'
+        ),
+    ), 'Dependent error message should be correct';
+    is_deeply $engine->seen, [
+        [changes_requiring_change => $change ],
+        [changes_requiring_change => $change2 ],
+    ], 'It should have checked twice for requiring changes';
+}
+
+##############################################################################
+# Test _trim_to().
+can_ok $engine, '_trim_to';
+
+# Should get an error when a change is not in the plan.
+throws_ok { $engine->_trim_to( 'foo', 'nonexistent', [] ) } 'App::Sqitch::X',
+    '_trim_to should complain about a nonexistent change key';
+is $@->ident, 'foo', '_trim_to nonexistent key error ident should be "foo"';
+is $@->message, __x(
+    'Cannot find "{change}" in the database or the plan',
+    change => 'nonexistent',
+), '_trim_to nonexistent key error message should be correct';
+
+# Should get an error when it's in the plan but not the database.
+throws_ok { $engine->_trim_to( 'yep', 'blah', [] ) } 'App::Sqitch::X',
+    '_trim_to should complain about an undeployed change key';
+is $@->ident, 'yep', '_trim_to undeployed change error ident should be "yep"';
+is $@->message, __x(
+    'Change "{change}" has not been deployed',
+    change => 'blah',
+), '_trim_to undeployed change error message should be correct';
+
+# Should get an error when it's deployed but not in the plan.
+@resolved = ('whatever');
+throws_ok { $engine->_trim_to( 'oop', 'whatever', [] ) } 'App::Sqitch::X',
+    '_trim_to should complain about an unplanned change key';
+is $@->ident, 'oop', '_trim_to unplanned change error ident should be "oop"';
+is $@->message, __x(
+    'Change "{change}" is deployed, but not planned',
+    change => 'whatever',
+), '_trim_to unplanned change error message should be correct';
+
+# Let's mess with changes. Start by shifting nothing.
+my $to_trim = [@changes];
+@resolved   = ($changes[0]->id);
+my $key     = $changes[0]->name;
+is $engine->_trim_to('foo', $key, $to_trim), 0,
+    qq{_trim_to should find "$key" at index 0};
+is_deeply [ map { $_->id } @{ $to_trim } ], [ map { $_->id } @changes ],
+    'Changes should be untrimmed';
+
+# Try shifting to the third change.
+$to_trim  = [@changes];
+@resolved = ($changes[2]->id);
+$key      = $changes[2]->name;
+is $engine->_trim_to('foo', $key, $to_trim), 2,
+    qq{_trim_to should find "$key" at index 2};
+is_deeply [ map { $_->id } @{ $to_trim } ], [ map { $_->id } @changes[2..$#changes] ],
+    'First two changes should be shifted off';
+
+# Try poppipng nothing.
+$to_trim  = [@changes];
+@resolved = ($changes[-1]->id);
+$key      = $changes[-1]->name;
+is $engine->_trim_to('foo', $key, $to_trim, 1), $#changes,
+    qq{_trim_to should find "$key" at last index};
+is_deeply [ map { $_->id } @{ $to_trim } ], [ map { $_->id } @changes ],
+    'Changes should be untrimmed';
+
+# Try shifting to the third-to-last change.
+$to_trim  = [@changes];
+@resolved = ($changes[-3]->id);
+$key      = $changes[-3]->name;
+is $engine->_trim_to('foo', $key, $to_trim, 1), 4,
+    qq{_trim_to should find "$key" at index 4};
+is_deeply [ map { $_->id } @{ $to_trim } ], [ map { $_->id } @changes[0..$#changes-2] ],
+    'Last two changes should be popped off';
+
+# Make sure that @HEAD is handled relative to deployed changes, not the plan.
+$to_trim  = [@changes];
+@resolved = ($changes[2]->id);
+$key      = '@HEAD';
+is $engine->_trim_to('foo', $key, $to_trim), 2,
+    qq{_trim_to should find "$key" at index 2};
+is_deeply [ map { $_->id } @{ $to_trim } ], [ map { $_->id } @changes[2..$#changes] ],
+    'First two changes should be shifted off';
+
+# Make sure that @ROOT is handled relative to deployed changes, not the plan.
+$to_trim  = [@changes];
+@resolved = ($changes[2]->id);
+$key      = '@ROOT';
+is $engine->_trim_to('foo', $key, $to_trim, 1), 2,
+    qq{_trim_to should find "$key" at index 2};
+is_deeply [ map { $_->id } @{ $to_trim } ], [ map { $_->id } @changes[0,1,2] ],
+    'All but First three changes should be popped off';
+
+##############################################################################
+# Test _verify_changes().
+can_ok $engine, '_verify_changes';
+$engine->seen;
+
+# Start with a single change with a valid verify script.
+is $engine->_verify_changes(1, 1, 0, $changes[1]), 0,
+    'Verify of a single change should return errcount 0';
+is_deeply +MockOutput->get_emit_literal, [[
+    '  * users @alpha ..', '', ' ',
+]], 'Declared output should list the change';
+is_deeply +MockOutput->get_emit, [['ok']],
+    'Emitted Output should reflect the verification of the change';
+is_deeply +MockOutput->get_comment, [], 'Should have no comments';
+is_deeply $engine->seen, [
+    [run_file => $changes[1]->verify_file ],
+], 'The verify script should have been run';
+
+# Try a single change with no verify script.
+is $engine->_verify_changes(0, 0, 0, $changes[0]), 0,
+    'Verify of another single change should return errcount 0';
+is_deeply +MockOutput->get_emit_literal, [[
+    '  * roles ..', '', ' ',
+]], 'Declared output should list the change';
+is_deeply +MockOutput->get_emit, [['ok']],
+    'Emitted Output should reflect the verification of the change';
+is_deeply +MockOutput->get_comment, [], 'Should have no comments';
+is_deeply +MockOutput->get_vent, [
+    [__x 'Verify script {file} does not exist', file => $changes[0]->verify_file],
+], 'A warning about no verify file should have been emitted';
+is_deeply $engine->seen, [
+], 'The verify script should not have been run';
+
+# Try multiple changes.
+is $engine->_verify_changes(0, 1, 0, @changes[0,1]), 0,
+    'Verify of two changes should return errcount 0';
+is_deeply +MockOutput->get_emit_literal, [
+    ['  * roles ..', '.......', ' '],
+    ['  * users @alpha ..', '', ' '],
+], 'Declared output should list both changes';
+is_deeply +MockOutput->get_emit, [['ok'], ['ok']],
+    'Emitted Output should reflect the verification of the changes';
+
+is_deeply +MockOutput->get_comment, [], 'Should have no comments';
+is_deeply +MockOutput->get_vent, [
+    [__x 'Verify script {file} does not exist', file => $changes[0]->verify_file],
+], 'A warning about no verify file should have been emitted';
+is_deeply $engine->seen, [
+    [run_file => $changes[1]->verify_file ],
+], 'Only one verify script should have been run';
+
+# Try multiple changes and show undeployed changes.
+my @plan_changes = $plan->changes;
+is $engine->_verify_changes(0, 1, 1, @changes[0,1]), 0,
+    'Verify of two changes and show pending';
+is_deeply +MockOutput->get_emit_literal, [
+    ['  * roles ..', '.......', ' '],
+    ['  * users @alpha ..', '', ' '],
+], 'Delcared output should list deployed changes';
+is_deeply +MockOutput->get_emit, [
+    ['ok'], ['ok'],
+    [__n 'Undeployed change:', 'Undeployed changes:', 2],
+    map { [ '  * ', $_->format_name_with_tags] } @plan_changes[2..$#plan_changes]
+], 'Emitted output should include list of pending changes';
+is_deeply +MockOutput->get_comment, [], 'Should have no comments';
+is_deeply +MockOutput->get_vent, [
+    [__x 'Verify script {file} does not exist', file => $changes[0]->verify_file],
+], 'A warning about no verify file should have been emitted';
+is_deeply $engine->seen, [
+    [run_file => $changes[1]->verify_file ],
+], 'Only one verify script should have been run';
+
+# Try a change that is not in the plan.
+$change = App::Sqitch::Plan::Change->new( name => 'nonexistent', plan => $plan );
+is $engine->_verify_changes(1, 0, 0, $change), 1,
+    'Verify of a change not in the plan should return errcount 1';
+is_deeply +MockOutput->get_emit_literal, [[
+    '  * nonexistent ..', '', ' '
+]], 'Declared Output should reflect the verification of the change';
+is_deeply +MockOutput->get_emit, [['not ok']],
+    'Emitted Output should reflect the failure of the verify';
+is_deeply +MockOutput->get_comment, [[__ 'Not present in the plan' ]],
+    'Should have a comment about the change missing from the plan';
+is_deeply $engine->seen, [], 'No verify script should have been run';
+
+# Try a change in the wrong place in the plan.
+my $mock_plan = Test::MockModule->new(ref $plan);
+$mock_plan->mock(index_of => 5);
+is $engine->_verify_changes(1, 0, 0, $changes[1]), 1,
+    'Verify of an out-of-order change should return errcount 1';
+is_deeply +MockOutput->get_emit_literal, [
+    ['  * users @alpha ..', '', ' '],
+], 'Declared output should reflect the verification of the change';
+is_deeply +MockOutput->get_emit, [['not ok']],
+    'Emitted Output should reflect the failure of the verify';
+is_deeply +MockOutput->get_comment, [[__ 'Out of order' ]],
+    'Should have a comment about the out-of-order change';
+is_deeply $engine->seen, [
+    [run_file => $changes[1]->verify_file ],
+], 'The verify script should have been run';
+
+# Make sure that multiple issues add up.
+$mock_engine->mock( verify_change => sub { hurl 'WTF!' });
+is $engine->_verify_changes(1, 0, 0, $changes[1]), 2,
+    'Verify of a change with 2 issues should return 2';
+is_deeply +MockOutput->get_emit_literal, [
+    ['  * users @alpha ..', '', ' '],
+], 'Declared output should reflect the verification of the change';
+is_deeply +MockOutput->get_emit, [['not ok']],
+    'Emitted Output should reflect the failure of the verify';
+is_deeply +MockOutput->get_comment, [
+    [__ 'Out of order' ],
+    ['WTF!'],
+], 'Should have comment about the out-of-order change and script failure';
+is_deeply $engine->seen, [], 'No abstract methods should have been called';
+
+# Make sure that multiple changes with multiple issues add up.
+$mock_engine->mock( verify_change => sub { hurl 'WTF!' });
+is $engine->_verify_changes(0, -1, 0, @changes[0,1]), 4,
+    'Verify of 2 changes with 2 issues each should return 4';
+is_deeply +MockOutput->get_emit_literal, [
+    ['  * roles ..', '.......', ' '],
+    ['  * users @alpha ..', '', ' '],
+], 'Declraed output should reflect the verification of both changes';
+is_deeply +MockOutput->get_emit, [['not ok'], ['not ok']],
+    'Emitted Output should reflect the failure of both verifies';
+is_deeply +MockOutput->get_comment, [
+    [__ 'Out of order' ],
+    ['WTF!'],
+    [__ 'Out of order' ],
+    ['WTF!'],
+], 'Should have comment about the out-of-order changes and script failures';
+is_deeply $engine->seen, [], 'No abstract methods should have been called';
+
+# Unmock before moving on.
+$mock_plan->unmock('index_of');
+$mock_engine->unmock('verify_change');
+
+# Now deal with changes in the plan but not in the list.
+is $engine->_verify_changes($#changes, $plan->count - 1, 0, $changes[-1]), 2,
+    '_verify_changes with two undeployed changes should returne 2';
+is_deeply +MockOutput->get_emit_literal, [
+    ['  * dr_evil ..', '', ' '],
+    ['  * foo ..', '....', ' ' , 'not ok', ' '],
+    ['  * blah ..', '...', ' ' , 'not ok', ' '],
+], 'Listed changes should be both deployed and undeployed';
+is_deeply +MockOutput->get_emit, [['ok']],
+    'Emitted Output should reflect 1 pass';
+is_deeply +MockOutput->get_comment, [
+    [__ 'Not deployed' ],
+    [__ 'Not deployed' ],
+], 'Should have comments for undeployed changes';
+is_deeply $engine->seen, [], 'No abstract methods should have been called';
+
+##############################################################################
+# Test verify().
+can_ok $engine, 'verify';
+my @verify_changes;
+$mock_engine->mock( _load_changes => sub { @verify_changes });
+
+# First, test with no changes.
+throws_ok { $engine->verify } 'App::Sqitch::X',
+    'Should get error for no deployed changes';
+is $@->ident, 'verify', 'No deployed changes ident should be "verify"';
+is $@->exitval, 1, 'No deployed changes exitval should be 1';
+is $@->message, __ 'No changes deployed',
+    'No deployed changes message should be correct';
+is_deeply +MockOutput->get_info, [
+    [__x 'Verifying {destination}', destination => $engine->destination],
+], 'Notification of the verify should be emitted';
+
+# Try no changes *and* nothing in the plan.
+my $count = 0;
+$mock_plan->mock(count => sub { $count });
+throws_ok { $engine->verify } 'App::Sqitch::X',
+    'Should get error for no changes';
+is $@->ident, 'verify', 'No changes ident should be "verify"';
+is $@->exitval, 1, 'No changes exitval should be 1';
+is $@->message, __ 'Nothing to verify (no planned or deployed changes)',
+    'No changes message should be correct';
+is_deeply +MockOutput->get_info, [
+    [__x 'Verifying {destination}', destination => $engine->destination],
+], 'Notification of the verify should be emitted';
+
+# Now return some changes but have nothing in the plan.
+@verify_changes = @changes;
+throws_ok { $engine->verify } 'App::Sqitch::X',
+    'Should get error for no planned changes';
+is $@->ident, 'verify', 'No planned changes ident should be "verify"';
+is $@->exitval, 2, 'No planned changes exitval should be 2';
+is $@->message, __ 'There are deployed changes, but none planned!',
+    'No planned changes message should be correct';
+is_deeply +MockOutput->get_info, [
+    [__x 'Verifying {destination}', destination => $engine->destination],
+], 'Notification of the verify should be emitted';
+
+# Let's do one change and have it pass.
+$mock_plan->mock(index_of => 0);
+$count = 1;
+@verify_changes = ($changes[1]);
+undef $@;
+ok $engine->verify, 'Verify one change';
+is_deeply +MockOutput->get_info, [
+    [__x 'Verifying {destination}', destination => $engine->destination],
+], 'Notification of the verify should be emitted';
+is_deeply +MockOutput->get_emit_literal, [
+    ['  * ' . $changes[1]->format_name_with_tags . ' ..', '', ' ' ],
+], 'The one change name should be declared';
+is_deeply +MockOutput->get_emit, [
+    ['ok'],
+    [__ 'Verify successful'],
+], 'Success should be emitted';
+is_deeply +MockOutput->get_comment, [], 'Should have no comments';
+
+# Verify two changes.
+MockOutput->get_vent;
+$mock_plan->unmock('index_of');
+@verify_changes = @changes[0,1];
+ok $engine->verify, 'Verify two changes';
+is_deeply +MockOutput->get_info, [
+    [__x 'Verifying {destination}', destination => $engine->destination],
+], 'Notification of the verify should be emitted';
+is_deeply +MockOutput->get_emit_literal, [
+    ['  * roles ..', '.......', ' ' ],
+    ['  * users @alpha ..', '', ' ' ],
+], 'The two change names should be declared';
+is_deeply +MockOutput->get_emit, [
+    ['ok'], ['ok'],
+    [__ 'Verify successful'],
+], 'Both successes should be emitted';
+is_deeply +MockOutput->get_comment, [], 'Should have no comments';
+is_deeply +MockOutput->get_vent, [
+    [__x(
+        'Verify script {file} does not exist',
+        file => $changes[0]->verify_file,
+    )]
+], 'Should have warning about missing verify script';
+
+# Make sure a reworked change (that is, one with a suffix) is ignored.
+my @suffixes = qw(@foo);
+my $mock_change = Test::MockModule->new(ref $change);
+$mock_change->mock(suffix => sub { shift @suffixes });
+
+@verify_changes = @changes[0,1];
+ok $engine->verify, 'Verify with a reworked change changes';
+is_deeply +MockOutput->get_info, [
+    [__x 'Verifying {destination}', destination => $engine->destination],
+], 'Notification of the verify should be emitted';
+is_deeply +MockOutput->get_emit_literal, [
+    ['  * roles ..', '.......', ' ' ],
+    ['  * users @alpha ..', '', ' ' ],
+], 'The two change names should be emitted';
+is_deeply +MockOutput->get_emit, [
+    ['ok'], ['ok'],
+    [__ 'Verify successful'],
+], 'Both successes should be emitted';
+is_deeply +MockOutput->get_comment, [], 'Should have no comments';
+is_deeply +MockOutput->get_vent, [], 'Should have no warnings';
+
+$mock_change->unmock('suffix');
+
+# Make sure we can trim.
+@verify_changes = @changes;
+@resolved   = map { $_->id } @changes[1,2];
+ok $engine->verify('users', 'widgets'), 'Verify two specific changes';
+is_deeply +MockOutput->get_info, [
+    [__x 'Verifying {destination}', destination => $engine->destination],
+], 'Notification of the verify should be emitted';
+is_deeply +MockOutput->get_emit_literal, [
+    ['  * users @alpha ..', '.', ' ' ],
+    ['  * widgets @beta ..', '', ' ' ],
+], 'The two change names should be emitted';
+is_deeply +MockOutput->get_emit, [
+    ['ok'], ['ok'],
+    [__ 'Verify successful'],
+], 'Both successes should be emitted';
+is_deeply +MockOutput->get_comment, [], 'Should have no comments';
+is_deeply +MockOutput->get_vent, [
+    [__x(
+        'Verify script {file} does not exist',
+        file => $changes[2]->verify_file,
+    )]
+], 'Should have warning about missing verify script';
+
+# Now fail!
+$mock_engine->mock( verify_change => sub { hurl 'WTF!' });
+@verify_changes = @changes;
+@resolved   = map { $_->id } @changes[1,2];
+throws_ok { $engine->verify('users', 'widgets') } 'App::Sqitch::X',
+    'Should get failure for failing verify scripts';
+is $@->ident, 'verify', 'Failed verify ident should be "verify"';
+is $@->exitval, 2, 'Failed verify exitval should be 2';
+is $@->message, __ 'Verify failed', 'Faield verify message should be correct';
+is_deeply +MockOutput->get_info, [
+    [__x 'Verifying {destination}', destination => $engine->destination],
+], 'Notification of the verify should be emitted';
+my $msg = __ 'Verify Summary Report';
+is_deeply +MockOutput->get_emit_literal, [
+    ['  * users @alpha ..', '.', ' ' ],
+    ['  * widgets @beta ..', '', ' ' ],
+], 'Both change names should be declared';
+is_deeply +MockOutput->get_emit, [
+    ['not ok'], ['not ok'],
+    [ $/, $msg ],
+    [ '-' x length $msg ],
+    [__x 'Changes: {number}', number => 2 ],
+    [__x 'Errors:  {number}', number => 2 ],
+], 'Output should include the failure report';
+is_deeply +MockOutput->get_comment, [
+    ['WTF!'],
+    ['WTF!'],
+], 'Should have the errors in comments';
+is_deeply +MockOutput->get_vent, [], 'Nothing should have been vented';
+
+__END__
+diag $_->format_name_with_tags for @changes;
+diag '======';
+diag $_->format_name_with_tags for $plan->changes;
