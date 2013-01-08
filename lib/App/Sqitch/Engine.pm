@@ -10,7 +10,7 @@ use App::Sqitch::X qw(hurl);
 use List::Util qw(first max);
 use namespace::autoclean;
 
-our $VERSION = '0.950';
+our $VERSION = '0.951';
 
 has sqitch => (
     is       => 'ro',
@@ -236,7 +236,7 @@ sub revert {
     }
 
     # Make change objects and check that all dependencies will be satisfied.
-    @changes = $self->_load_changes( reverse @changes );
+    @changes = reverse $self->_load_changes( @changes );
     $self->check_revert_dependencies(@changes);
 
     # Do we want to support modes, where failures would re-deploy to previous
@@ -378,7 +378,7 @@ sub _verify_changes {
                 $errs++;
             }
             # Is it reworked?
-            $reworked = !! $plan->change_at($plan_index)->suffix;
+            $reworked = $plan->change_at($plan_index)->is_reworked;
         } else {
             $sqitch->comment(__ 'Not present in the plan');
             $errs++;
@@ -605,14 +605,27 @@ sub find_change {
 sub _load_changes {
     my $self = shift;
     my $plan = $self->sqitch->plan;
-    map {
-        my $tags = $_->{tags} || [];
-        my $c = App::Sqitch::Plan::Change->new(%{ $_ }, plan => $plan );
+    my (@changes, %seen);
+    for my $params (@_) {
+        my $tags = $params->{tags} || [];
+        my $c = App::Sqitch::Plan::Change->new(%{ $params }, plan => $plan );
+
+        # Add tags.
         $c->add_tag(
             App::Sqitch::Plan::Tag->new(name => $_, plan => $plan, change => $c )
-        ) for @{ $tags };
-        $c;
-    } @_;
+        ) for map { s/^@//; $_ } @{ $tags };
+
+        if ( defined ( my $idx = $seen{ $params->{name} } ) ) {
+            # It's reworked; add rework tags in reverse order by change.
+            my $dupe = $changes[$idx];
+            $dupe->add_rework_tags(map { $changes[$_]->tags } reverse $idx..$#changes);
+        }
+
+        push @changes => $c;
+        $seen{ $params->{name} } = $#changes;
+    }
+
+    return @changes;
 }
 
 sub _deploy_by_change {
@@ -1571,7 +1584,7 @@ number of changes before the latest change will be returned.
 
   my @change_hashes = $engine->deployed_changes;
 
-Returns a list of hash reference, each representing a change from the current
+Returns a list of hash references, each representing a change from the current
 project in the order in which they were deployed. The keys in each hash
 reference must be:
 

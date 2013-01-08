@@ -1,5 +1,16 @@
 Revision history for Perl extension App::Sqitch
 
+0.951  2013-01-08T00:21:58Z
+     - Fixed double "@" displayed for tags in the output of `revert`.
+     - Fixed reversion of reworked changes to run the original revert script,
+       rather than the reworked script.
+     - Added `is_reworked` accessor to App::Sqitch::Plan::Change.
+     - Changed the behavior determining the file name to use for reworked
+       change scripts. It now looks for a deploy script using the name of any
+       tag between the reworked instances of a change and selects the first
+       one it finds that exists. This will allow Sqitch to find the proper
+       script name even if new tags have been added to the plan (issue #70).
+
 0.950  2013-01-03T23:09:42Z
      - Fixed the "Name" header in `sqitch-rebase` so that it will actually
        show up on the CPAN search sites.
@@ -17,7 +28,7 @@ Revision history for Perl extension App::Sqitch
        checking dependencies for each change just before deploying or reverting
        it. This allows a or revert deploy to fail sooner, with no database
        changes, when dependencies are not met.
-     - The `deploy` command now check that no changes its about to deploy are
+     - The `deploy` command now checks that no changes its about to deploy are
        already deployed.
      - Added `--mode` to the `rebase` command.
      - Added the `--verify` option to `deploy` and `rebase`. Specify this

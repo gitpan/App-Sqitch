@@ -18,7 +18,7 @@ use namespace::autoclean;
 use Moose;
 use constant SYNTAX_VERSION => '1.0.0-b2';
 
-our $VERSION = '0.950';
+our $VERSION = '0.951';
 
 # Like [:punct:], but excluding _. Copied from perlrecharclass.
 my $punct = q{-!"#$%&'()*+,./:;<=>?@[\\]^`{|}~};
@@ -420,8 +420,13 @@ sub _parse {
             push @lines => $prev_change;
 
             if (my $duped = $change_named{ $params{name} }) {
-                # Mark previously-seen change of same name as duped.
-                $duped->suffix($prev_tag->format_name);
+                # Get rework tags by change in reverse order to reworked change.
+                my @rework_tags;
+                for (my $i = $#changes; $changes[$i] ne $duped; $i--) {
+                    push @rework_tags => $changes[$i]->tags;
+                }
+                # Add list of rework tags to the reworked change.
+                $duped->add_rework_tags(@rework_tags, $duped->tags);
             }
             $change_named{ $params{name} } = $prev_change;
         }
@@ -755,7 +760,7 @@ sub rework {
     $self->_check_dependencies( $new, 'rework' );
 
     # We good.
-    $orig->suffix( $tag->format_name );
+    $orig->add_rework_tags($tag);
     $changes->append( $new );
     $self->_lines->append( $new );
     return $new;
