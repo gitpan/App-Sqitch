@@ -7,12 +7,12 @@ use utf8;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use File::Copy;
-use Moose;
+use Mouse;
 use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.951';
+our $VERSION = '0.952';
 
 has requires => (
     is       => 'ro',

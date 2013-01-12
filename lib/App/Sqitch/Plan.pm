@@ -15,10 +15,10 @@ use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use List::MoreUtils qw(uniq);
 use namespace::autoclean;
-use Moose;
+use Mouse;
 use constant SYNTAX_VERSION => '1.0.0-b2';
 
-our $VERSION = '0.951';
+our $VERSION = '0.952';
 
 # Like [:punct:], but excluding _. Copied from perlrecharclass.
 my $punct = q{-!"#$%&'()*+,./:;<=>?@[\\]^`{|}~};
@@ -884,7 +884,7 @@ sub write_to {
 }
 
 __PACKAGE__->meta->make_immutable;
-no Moose;
+no Mouse;
 
 __END__
 

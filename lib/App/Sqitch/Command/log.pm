@@ -7,8 +7,8 @@ use utf8;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use App::Sqitch::DateTime;
-use Moose;
-use Moose::Util::TypeConstraints;
+use Mouse;
+use Mouse::Util::TypeConstraints;
 use String::Formatter;
 use namespace::autoclean;
 use Try::Tiny;
@@ -22,7 +22,7 @@ BEGIN {
     $ENV{ANSI_COLORS_DISABLED} = 1 unless CAN_OUTPUT_COLOR;
 }
 
-our $VERSION = '0.951';
+our $VERSION = '0.952';
 
 my %FORMATS;
 $FORMATS{raw} = <<EOF;

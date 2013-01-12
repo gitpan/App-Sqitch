@@ -4,13 +4,13 @@ use 5.010;
 use strict;
 use warnings;
 use utf8;
-use Moose;
+use Mouse;
 use Locale::TextDomain qw(App-Sqitch);
 use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.951';
+our $VERSION = '0.952';
 
 has note => (
     is       => 'ro',

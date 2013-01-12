@@ -10,7 +10,7 @@ use Role::Identifiable::HasIdent 0.005;
 use Role::Identifiable::HasTags 0.005;
 use overload '""' => 'as_string';
 
-our $VERSION = '0.951';
+our $VERSION = '0.952';
 
 has message => (
     is       => 'ro',
@@ -54,7 +54,7 @@ sub as_string {
 }
 
 __PACKAGE__->meta->make_immutable(inline_constructor => 0);
-no Moose;
+no Mouse;
 
 __END__
 

@@ -5,11 +5,11 @@ use strict;
 use warnings;
 use utf8;
 use namespace::autoclean;
-use Moose;
+use Mouse;
 
 extends 'App::Sqitch::Engine';
 
-our $VERSION = '0.951';
+our $VERSION = '0.952';
 
 has client => (
     is       => 'ro',
@@ -56,7 +56,7 @@ sub config_vars {
 }
 
 __PACKAGE__->meta->make_immutable;
-no Moose;
+no Mouse;
 
 __END__
 

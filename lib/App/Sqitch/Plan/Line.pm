@@ -3,8 +3,7 @@ package App::Sqitch::Plan::Line;
 use 5.010;
 use utf8;
 use namespace::autoclean;
-use Moose;
-use Moose::Meta::Attribute::Native 2.0300;
+use Mouse;
 use App::Sqitch::X qw(hurl);
 use Locale::TextDomain qw(App-Sqitch);
 
@@ -159,7 +158,7 @@ sub as_string {
 }
 
 __PACKAGE__->meta->make_immutable;
-no Moose;
+no Mouse;
 
 __END__
 

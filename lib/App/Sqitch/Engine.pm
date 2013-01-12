@@ -1,7 +1,7 @@
 package App::Sqitch::Engine;
 
 use 5.010;
-use Moose;
+use Mouse;
 use strict;
 use utf8;
 use Try::Tiny;
@@ -10,7 +10,7 @@ use App::Sqitch::X qw(hurl);
 use List::Util qw(first max);
 use namespace::autoclean;
 
-our $VERSION = '0.951';
+our $VERSION = '0.952';
 
 has sqitch => (
     is       => 'ro',
@@ -977,7 +977,7 @@ sub search_events {
 }
 
 __PACKAGE__->meta->make_immutable;
-no Moose;
+no Mouse;
 
 __END__
 

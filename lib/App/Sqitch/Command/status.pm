@@ -6,15 +6,15 @@ use warnings;
 use utf8;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
-use Moose;
-use Moose::Util::TypeConstraints;
+use Mouse;
+use Mouse::Util::TypeConstraints;
 use App::Sqitch::DateTime;
 use List::Util qw(max);
 use Try::Tiny;
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.951';
+our $VERSION = '0.952';
 
 has show_changes => (
     is      => 'ro',

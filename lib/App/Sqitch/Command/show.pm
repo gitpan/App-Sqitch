@@ -7,10 +7,10 @@ use utf8;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use List::Util qw(first);
-use Moose;
+use Mouse;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.951';
+our $VERSION = '0.952';
 
 sub execute {
     my ( $self, $type, $key ) = @_;
