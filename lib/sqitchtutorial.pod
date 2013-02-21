@@ -230,10 +230,6 @@ Then the verify will look something like:
     * appschema .. psql:verify/appschema.sql:5: ERROR:  division by zero
   # Verify script "verify/appschema.sql" failed.
   not ok
-  Undeployed changes:
-    * users
-    * insert_user
-    * change_pass
 
   Verify Summary Report
   ---------------------
@@ -1190,7 +1186,7 @@ them all again in the proper order. So let's commit F<.gitattributes>; seems
 worthwhile to keep that change:
 
   > git add .
-  > git ci -m 'Add `.gitattributes` with union merge for `sqitch.plan`.'
+  > git commit -m 'Add `.gitattributes` with union merge for `sqitch.plan`.'
   [flips 5fb0367] Add `.gitattributes` with union merge for `sqitch.plan`.
    1 file changed, 1 insertion(+)
    create mode 100644 .gitattributes
@@ -1302,6 +1298,19 @@ can use it. The deploy script should be:
 And the revert script should be:
 
   DROP EXTENSION pgcrypto;
+
+=over
+
+If you're on PostgreSQL 9.0 or lower, you won't be able to deploy C<pgcrypto>
+with a Sqitch change, alas. You'll have to install it manually, like so:
+
+    psql -d flipr_test -f /path/to/pgsql/share/contrib/pgcrypto.sql
+
+Don't forget to do this with your staging and production databases, too. Or
+consider upgrading to PostgreSQL 9.1 or higher; the SQL-level extension
+support is amazingly useful.
+
+=back
 
 We're going to use the C<crypt()> and C<gen_salt()> functions, so in the
 C<verify> script, let's make sure that the extension exists I<and> that both

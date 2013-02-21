@@ -1,6 +1,8 @@
 Build.PL
 Changes
 LICENSE
+LocaleData/de/LC_MESSAGES/App-Sqitch.mo
+LocaleData/fr/LC_MESSAGES/App-Sqitch.mo
 MANIFEST
 META.json
 META.yml

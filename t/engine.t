@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use 5.010;
 use utf8;
-use Test::More tests => 544;
+use Test::More tests => 546;
 #use Test::More 'no_plan';
 use App::Sqitch;
 use App::Sqitch::Plan;
@@ -220,7 +220,15 @@ can_ok $engine, '_load_changes';
 my $now = App::Sqitch::DateTime->now;
 my $plan = $sqitch->plan;
 
+# Mock App::Sqitch::DateTime so that dbchange tags all have the same
+# timestamps.
+my $mock_dt = Test::MockModule->new('App::Sqitch::DateTime');
+$mock_dt->mock(now => $now);
+
+
 for my $spec (
+    [ 'no change' => [] ],
+    [ 'undef' => [undef] ],
     ['no tags' => [
         {
             id            => 'c8a60f1a4fdab2cf91ee7f6da08f4ac52a732b4d',
@@ -392,15 +400,18 @@ for my $spec (
         my $tags  = $_->{tags}  || [];
         my $rtags = $_->{rtags};
         my $c = App::Sqitch::Plan::Change->new(%{ $_ }, plan => $plan );
-        $c->add_tag(
-            App::Sqitch::Plan::Tag->new(name => $_, plan => $plan, change => $c )
-        ) for map { s/^@//; $_ } @{ $tags };
+        $c->add_tag(App::Sqitch::Plan::Tag->new(
+            name      => $_,
+            plan      => $plan,
+            change    => $c,
+            timestamp => $now,
+        )) for map { s/^@//; $_ } @{ $tags };
         if (my $dupe = $seen{ $_->{name} }) {
             $dupe->add_rework_tags( map { $seen{$_}->tags } @{ $rtags });
         }
         $seen{ $_->{name} } = $c;
         $c;
-    } @{ $args }], "Should load changes with $desc";
+    } grep { $_ } @{ $args }], "Should load changes with $desc";
 }
 
 ##############################################################################
@@ -488,7 +499,7 @@ is_deeply +MockOutput->get_info, [[__ 'not ok' ]],
 $mock_engine->mock( verify_change => sub { hurl 'WTF!' });
 throws_ok { $engine->deploy_change($change) } 'App::Sqitch::X',
     'Deploy change with failed verification';
-is $@->message, 'Deploy failed', 'Error should be from deploy_change';
+is $@->message, __ 'Deploy failed', 'Error should be from deploy_change';
 is_deeply $engine->seen, [
     ['begin_work'],
     [run_file => $change->deploy_file ],
@@ -1447,11 +1458,6 @@ is $@->message, __ 'Nothing to revert (nothing deployed)',
 is_deeply $engine->seen, [
     [deployed_changes => undef],
 ], 'Should have called deployed_changes';
-
-# Mock App::Sqitch::DateTime so that dbchange tags all have the same
-# timestamps.
-my $mock_dt = Test::MockModule->new('App::Sqitch::DateTime');
-$mock_dt->mock(now => $now);
 
 # Now revert from a deployed change.
 my @dbchanges;

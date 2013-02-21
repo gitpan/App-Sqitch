@@ -10,7 +10,7 @@ use App::Sqitch::X qw(hurl);
 use List::Util qw(first max);
 use namespace::autoclean;
 
-our $VERSION = '0.952';
+our $VERSION = '0.953';
 
 has sqitch => (
     is       => 'ro',
@@ -607,6 +607,7 @@ sub _load_changes {
     my $plan = $self->sqitch->plan;
     my (@changes, %seen);
     for my $params (@_) {
+        next unless $params;
         my $tags = $params->{tags} || [];
         my $c = App::Sqitch::Plan::Change->new(%{ $params }, plan => $plan );
 
