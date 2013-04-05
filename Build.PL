@@ -8,6 +8,7 @@ use lib qw{inc}; use Module::Build::Sqitch;
 my %module_build_args = (
   "build_requires" => {
     "Capture::Tiny" => "0.12",
+    "DBD::SQLite" => 0,
     "File::Spec" => 0,
     "FindBin" => 0,
     "Module::Build" => "0.35",
@@ -28,7 +29,7 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.953",
+  "dist_version" => "0.960",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {
@@ -48,6 +49,7 @@ my %module_build_args = (
     "File::Path" => 0,
     "File::Temp" => 0,
     "Getopt::Long" => 0,
+    "Git::Wrapper" => 0,
     "Hash::Merge" => 0,
     "IO::Pager" => 0,
     "IPC::System::Simple" => "1.17",
@@ -58,6 +60,7 @@ my %module_build_args = (
     "Moose" => 0,
     "Mouse" => "1.04",
     "Mouse::Meta::Attribute::Native" => "1.04",
+    "Mouse::Role" => 0,
     "Mouse::Util::TypeConstraints" => 0,
     "MouseX::Types::Path::Class" => "0.06",
     "POSIX" => 0,

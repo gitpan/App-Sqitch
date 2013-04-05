@@ -320,7 +320,7 @@ is $@->message, __x(
     lineno => 5,
     error => __(
         qq{Invalid name; names must not begin with punctuation, }
-        . 'contain "@", ":", or "#", or end in punctuation or digits following punctuation',
+        . 'contain "@", ":", "#", or blanks, or end in punctuation or digits following punctuation',
     ),
 ), 'And the bad change name error message should be correct';
 
@@ -358,7 +358,7 @@ for my $name (@bad_names) {
             lineno => 4,
             error => __(
                 qq{Invalid name; names must not begin with punctuation, }
-                . 'contain "@", ":", or "#", or end in punctuation or digits following punctuation',
+                . 'contain "@", ":", "#", or blanks, or end in punctuation or digits following punctuation',
             )
         ),  qq{And "$line" should trigger the appropriate message};
         is sorted, 0, 'Should not have sorted changes';
@@ -1006,6 +1006,95 @@ $plan->do(sub {
 $plan->do(sub { fail 'Should not get anything passed to do()' });
 
 ##############################################################################
+# Let's try searching changes.
+isa_ok my $iter = $plan->search_changes, 'CODE',
+    'search_changes() should return a code ref';
+
+my $get_all_names = sub {
+    my $iter = shift;
+    my @res;
+    while (my $change = $iter->()) {
+        push @res => $change->name;
+    }
+    return \@res;
+};
+
+is_deeply $get_all_names->($iter), [qw(hey you this/rocks hey-there)],
+    'All the changes should be returned in the proper order';
+
+# Try reverse order.
+is_deeply $get_all_names->( $plan->search_changes( direction => 'DESC' ) ),
+    [qw(hey-there this/rocks you hey)], 'Direction "DESC" should work';
+
+# Try invalid directions.
+throws_ok { $plan->search_changes( direction => 'foo' ) } 'App::Sqitch::X',
+    'Should get error for invalid direction';
+is $@->ident, 'DEV', 'Invalid direction error ident should be "DEV"';
+is $@->message, 'Search direction must be either "ASC" or "DESC"',
+    'Invalid direction error message should be correct';
+
+# Try ascending lowercased.
+is_deeply $get_all_names->( $plan->search_changes( direction => 'asc' ) ),
+    [qw(hey you this/rocks hey-there)], 'Direction "asc" should work';
+
+# Try change name.
+is_deeply $get_all_names->( $plan->search_changes( name => 'you')),
+    [qw(you)], 'Search by change name should work';
+
+is_deeply $get_all_names->( $plan->search_changes( name => 'hey')),
+    [qw(hey hey-there)], 'Search by change name should work as a regex';
+
+is_deeply $get_all_names->( $plan->search_changes( name => '[-/]')),
+    [qw(this/rocks hey-there)],
+    'Search by change name should with a character class';
+
+# Try planner name.
+is_deeply $get_all_names->( $plan->search_changes( planner => 'Barack' ) ),
+    [qw(this/rocks hey-there)], 'Search by planner should work';
+
+is_deeply $get_all_names->( $plan->search_changes( planner => 'a..a' ) ),
+    [qw(you)], 'Search by planner should work as a regex';
+
+# Search by operation.
+is_deeply $get_all_names->( $plan->search_changes( operation => 'deploy' ) ),
+    [qw(hey you this/rocks hey-there)], 'Search by operation "deploy" should work';
+
+is_deeply $get_all_names->( $plan->search_changes( operation => 'revert' ) ),
+    [], 'Search by operation "rever" should return nothing';
+
+# Fake out an operation.
+my $mock_change = Test::MockModule->new('App::Sqitch::Plan::Change');
+$mock_change->mock( operator => sub { return shift->name =~ /hey/ ? '-' : '+' });
+
+is_deeply $get_all_names->( $plan->search_changes( operation => 'DEPLOY' ) ),
+    [qw(you this/rocks)], 'Search by operation "DEPLOY" should now return two changes';
+
+is_deeply $get_all_names->( $plan->search_changes( operation => 'REVERT' ) ),
+    [qw(hey hey-there)], 'Search by operation "REVERT" should return the other two';
+
+$mock_change->unmock_all;
+
+# Make sure we test only for legal operations.
+throws_ok { $plan->search_changes( operation => 'foo' ) } 'App::Sqitch::X',
+    'Should get an error for unknown operation';
+is $@->ident, 'DEV', 'Unknown operation error ident should be "DEV"';
+is $@->message, 'Unknown change operation "foo"',
+    'Unknown operation error message should be correct';
+
+# Test offset and limit.
+is_deeply $get_all_names->( $plan->search_changes( offset => 2 ) ),
+    [qw(this/rocks hey-there)], 'Search with offset 2 should work';
+
+is_deeply $get_all_names->( $plan->search_changes( offset => 2, limit => 1 ) ),
+    [qw(this/rocks)], 'Search with offset 2, limit 1 should work';
+
+is_deeply $get_all_names->( $plan->search_changes( offset => 3, direction => 'desc' ) ),
+    [qw(hey)], 'Search with offset 3 and dierction "desc" should work';
+
+is_deeply $get_all_names->( $plan->search_changes( offset => 2, limit => 1, direction => 'desc' ) ),
+    [qw(you)], 'Search with offset 2, limit 1, dierction "desc" should work';
+
+##############################################################################
 # Test writing the plan.
 can_ok $plan, 'write_to';
 my $to = file 'plan.out';
@@ -1081,7 +1170,7 @@ for my $name (@bad_names) {
     is $@->ident, 'plan', qq{Invalid name "$name" error ident should be "plan"};
     is $@->message, __x(
         qq{"{name}" is invalid: tags must not begin with punctuation, }
-        . 'contain "@", ":", or "#", or end in punctuation or digits following punctuation',
+        . 'contain "@", ":", "#", or blanks, or end in punctuation or digits following punctuation',
         name => $name,
     ), qq{And the "$name" error message should be correct};
 }
@@ -1122,12 +1211,22 @@ file_contents_is $to,
     . $file->slurp(iomode => '<:encoding(UTF-8)')
     . $tag->as_string . $/,
     'The contents should include the "w00t" tag';
-
 # Try passing the tag name with a leading @.
 ok my $tag2 = $plan->tag( name => '@alpha' ), 'Add tag "@alpha"';
 is $plan->index_of('@alpha'), 3, 'Should find "@alpha at index 3';
 is $tag2->name, 'alpha', 'The returned tag should be @alpha';
 is $tag2->change, $plan->last, 'The @alpha change should be the last change';
+
+# Try specifying the change to tag.
+ok my $tag3 = $plan->tag(name => 'blarney', change => 'you'),
+    'Tag change "you"';
+is $plan->count, 4, 'Should still have 4 changes';
+is $plan->index_of('@blarney'), 1, 'Should find "@blarney at index 1';
+is_deeply [map { $_->name } $plan->change_at(1)->tags], [qw(foo blarney)],
+    'The blarney tag should be on the second change';
+isa_ok $tag3, 'App::Sqitch::Plan::Tag';
+is $tag3->name, 'blarney', 'The returned tag should be @blarney';
+is $tag3->change, $plan->change_at(1), 'The @blarney change should be the second change';
 
 # Should choke on a duplicate tag.
 throws_ok { $plan->tag( name => 'w00t' ) } 'App::Sqitch::X',
@@ -1146,7 +1245,7 @@ for my $name (@bad_names, 'foo#bar') {
     is $@->ident, 'plan', qq{Invalid name "$name" error ident should be "plan"};
     is $@->message, __x(
         qq{"{name}" is invalid: tags must not begin with punctuation, }
-        . 'contain "@", ":", or "#", or end in punctuation or digits following punctuation',
+        . 'contain "@", ":", "#", or blanks, or end in punctuation or digits following punctuation',
         name => $name,
     ), qq{And the "$name" error message should be correct};
 }
@@ -1185,10 +1284,12 @@ is $new_change->as_string, join (' ',
     $new_change->format_note,
 ), 'Should have plain stringification of "booya"';
 
+my $contents = $file->slurp(iomode => '<:encoding(UTF-8)');
+$contents =~ s{(\s+this/rocks)}{"\n" . $tag3->as_string . $1}ems;
 ok $plan->write_to($to), 'Write out the file again';
 file_contents_is $to,
     '%syntax-version=' . App::Sqitch::Plan::SYNTAX_VERSION . $/
-    . $file->slurp(iomode => '<:encoding(UTF-8)')
+    . $contents
     . $tag->as_string . "\n"
     . $tag2->as_string . "\n\n"
     . $new_change->as_string . $/,
@@ -1259,7 +1360,7 @@ for my $name (@bad_names) {
     is $@->ident, 'plan', qq{Invalid name "$name" error ident should be "plan"};
     is $@->message, __x(
         qq{"{name}" is invalid: changes must not begin with punctuation, }
-        . 'contain "@", ":", or "#", or end in punctuation or digits following punctuation',
+        . 'contain "@", ":", "#", or blanks, or end in punctuation or digits following punctuation',
         name => $name,
     ), qq{And the "$name" error message should be correct};
 }
@@ -1508,7 +1609,6 @@ is $fh->getline, undef, 'It should be empty';
 $mocker->unmock('check_changes');
 can_ok $CLASS, 'check_changes';
 my @deps;
-my $mock_change = Test::MockModule->new('App::Sqitch::Plan::Change');
 my $i = 0;
 my $j = 0;
 $mock_change->mock(requires => sub {
@@ -1858,7 +1958,7 @@ for my $bad (@bad_names) {
     is $@->ident, 'plan', qq{Ident for bad proj "$bad" should be "plan"};
     my $error =  __x(
             'invalid project name "{project}": project names must not '
-            . 'begin with punctuation, contain "@", ":", or "#", or end in '
+            . 'begin with punctuation, contain "@", ":", "#", or blanks, or end in '
             . 'punctuation or digits following punctuation',
             project => $bad);
     is $@->message, __x(

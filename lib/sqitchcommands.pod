@@ -27,6 +27,10 @@ Add a new change to the plan
 
 Bundle a Sqitch project for distribution
 
+=item L<C<checkout>|sqitch-checkout>
+
+Revert, checkout another VCS branch, and re-deploy changes
+
 =item L<C<config>|sqitch-config>
 
 Get and set local, user, or system options
@@ -50,6 +54,10 @@ Show change logs for a database.
 =item L<C<rebase>|sqitch-rebase>
 
 Revert and redeploy database changes.
+
+=item L<C<checkout>|sqitch-checkout>
+
+Move to another VCS branch, and deploy the plan from the destination.
 
 =item L<C<revert>|sqitch-revert>
 

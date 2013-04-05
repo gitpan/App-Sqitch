@@ -18,7 +18,8 @@ We'll start by creating new project from scratch, a fictional antisocial
 networking site called Flipr. All examples use L<Git|http://git-scm.com/> as
 the VCS and L<PostgreSQL|http://www.postgresql.org/> as the storage engine,
 but for the most part you can substitute other VCSes and database engines in
-the examples as appropriate.
+the examples as appropriate. If you'd like to manage an SQLite database, see
+L<sqitchtutorial-sqlite>.
 
 =head1 Starting a New Project
 
@@ -151,9 +152,9 @@ Now we can try deploying this change:
 
 First Sqitch created the metadata tables used to track database changes. The
 structure and name of the metadata tables varies between databases (PostgreSQL
-uses a schema to namespace its metadata; MySQL and SQLite use a prefix). Next,
-Sqitch deploys changes. We only have one so far; the C<+> reinforces the idea
-that the change is being added to the database.
+uses a schema to namespace its metadata, while SQLite uses a separate
+database). Next, Sqitch deploys changes. We only have one so far; the C<+>
+reinforces the idea that the change is being C<added> to the database.
 
 With this change deployed, if you connect to the database, you'll be able to
 see the schema:
@@ -166,7 +167,7 @@ see the schema:
 
 =head2 Trust, But Verify
 
-But that's too much work. do you really want to do something like that after
+But that's too much work. Do you really want to do something like that after
 every deploy?
 
 Here's where the C<verify> script comes in. Its job is to test that the deploy
@@ -260,15 +261,15 @@ tables from the database:
 
 Let's make sure that we can revert the change:
 
-  > sqitch --db-name flipr_test revert
+  > sqitch -d flipr_test revert
   Revert all changes from flipr_test? [Yes]
     - appschema .. ok
 
 The L<C<revert>|sqitch-revert> command first prompts to make sure that we
 really do want to revert. This is to prevent unnecessary accidents. You can
 pass the C<-y> option to disable the prompt. Also, notice the C<-> before the
-change name in the output, which reinforces that the change is being removed
-from the database. And now the schema should be gone:
+change name in the output, which reinforces that the change is being
+I<removed> from the database. And now the schema should be gone:
 
   > psql -d flipr_test -c '\dn flipr'
               List of roles
@@ -328,7 +329,7 @@ the C<verify> script is applied when the change is deployed:
   Deploying changes to flipr_test
     + appschema .. ok
 
-And now the user should be back:
+And now the schema should be back:
 
   > psql -d flipr_test -c '\dn flipr'
   List of schemas
@@ -767,7 +768,7 @@ We can try deploying to make sure the tag gets picked up like so:
     + change_pass @v1.0.0-dev1 .. ok
 
 Great, all four changes were deployed and C<change_pass> was tagged with
-C<@v1.0.0-dev1>. Let's have a look at the state:
+C<@v1.0.0-dev1>. Let's have a look at the status:
 
   > sqitch -d flipr_dev status
   # On database flipr_dev
@@ -780,7 +781,7 @@ C<@v1.0.0-dev1>. Let's have a look at the state:
   # 
   Nothing to deploy (up-to-date)
 
-Note the listing of the tag as part of the stats message. Now let's bundle
+Note the listing of the tag as part of the status message. Now let's bundle
 everything up for release:
 
   > sqitch bundle
@@ -1079,6 +1080,7 @@ That throws out our botched merge. Now let's go back to our branch and rebase
 it on C<master>:
 
   > git checkout flips
+  Switched to branch 'flips'
   > git rebase master
   First, rewinding head to replay your work on top of it...
   Applying: Add flips table.
@@ -1252,8 +1254,8 @@ release:
   [master 3b09796] Tag the database with v1.0.0-dev2.
    1 file changed, 1 insertion(+)
   > git tag v1.0.0-dev2 -am 'Tag v1.0.0-dev2'
-  > sqitch bundle
-  Bundling into bundle
+  > sqitch bundle --dest-dir flipr-1.0.0-dev2 
+  Bundling into flipr-1.0.0-dev2
   Writing config
   Writing plan
   Writing scripts
@@ -1267,6 +1269,10 @@ release:
     + flips
     + insert_flip
     + delete_flip @v1.0.0-dev2
+
+Note the use of the C<--dest-dir> option to C<sqitch bundle>. Just a nicer way
+to create the top-level directory name so we don't have to rename it from
+F<bundle>.
 
 =head1 In Place Changes
 
@@ -1408,7 +1414,7 @@ change. As such, it's important not to change them again. But hey, if you're
 reworking the change, you shouldn't need to.
 
 The other thing to notice is that F<revert/insert_user.sql> has changed.
-Sqitch replaced it with The original deploy script. As of now,
+Sqitch replaced it with the original deploy script. As of now,
 F<deploy/insert_user.sql> and F<revert/insert_user.sql> are identical. This is
 on the assumption that the deploy script will be changed (we're reworking it,
 remember?), and that the revert script should actually change things back to

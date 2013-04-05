@@ -13,12 +13,12 @@ use App::Sqitch::Plan::ChangeList;
 use App::Sqitch::Plan::LineList;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
-use List::MoreUtils qw(uniq);
+use List::MoreUtils qw(uniq any);
 use namespace::autoclean;
 use Mouse;
 use constant SYNTAX_VERSION => '1.0.0-b2';
 
-our $VERSION = '0.953';
+our $VERSION = '0.960';
 
 # Like [:punct:], but excluding _. Copied from perlrecharclass.
 my $punct = q{-!"#$%&'()*+,./:;<=>?@[\\]^`{|}~};
@@ -48,7 +48,7 @@ has sqitch => (
 );
 
 has _plan => (
-    is         => 'ro',
+    is         => 'rw',
     isa        => 'HashRef',
     builder    => 'load',
     init_arg   => 'plan',
@@ -105,18 +105,29 @@ has uri => (
     }
 );
 
+sub parse {
+    my ( $self, $data ) = @_;
+    # XXX Assume decoded.
+    open my $fh, '<', \$data;
+    $self->_plan( $self->load($fh) );
+    return $self;
+}
+
 sub load {
     my $self = shift;
     my $file = $self->sqitch->plan_file;
-    hurl plan => __x('Plan file {file} does not exist', file => $file)
-        unless -e $file;
-    hurl plan => __x('Plan file {file} is not a regular file', file => $file)
-        unless -f $file;
-    my $fh = $file->open('<:encoding(UTF-8)') or hurl plan => __x(
-        'Cannot open {file}: {error}',
-        file  => $file,
-        error => $!
-    );
+    my $fh = shift || do {
+        hurl plan => __x('Plan file {file} does not exist', file => $file)
+            unless -e $file;
+        hurl plan => __x('Plan file {file} is not a regular file', file => $file)
+            unless -f $file;
+        $file->open('<:encoding(UTF-8)') or hurl plan => __x(
+            'Cannot open {file}: {error}',
+            file  => $file,
+            error => $!
+        );
+    };
+
     return $self->_parse($file, $fh);
 }
 
@@ -215,7 +226,7 @@ sub _parse {
             my $proj = $+{value};
             $raise_syntax_error->(__x(
                 qq{invalid project name "{project}": project names must not }
-                . 'begin with punctuation, contain "@", ":", or "#", or end in '
+                . 'begin with punctuation, contain "@", ":", "#", or blanks, or end in '
                 . 'punctuation or digits following punctuation',
                 project => $proj,
             )) unless $proj =~ /\A$name_re\z/;
@@ -296,7 +307,7 @@ sub _parse {
         # Raise errors for missing data.
         $raise_syntax_error->(__(
             qq{Invalid name; names must not begin with punctuation, }
-            . 'contain "@", ":", or "#", or end in punctuation or digits following punctuation',
+            . 'contain "@", ":", "#", or blanks, or end in punctuation or digits following punctuation',
         )) if !$params{name}
             || (!$params{yr} && $line =~ $ts_re);
 
@@ -580,6 +591,70 @@ sub first_index_of { shift->_changes->first_index_of(@_) }
 sub change_at      { shift->_changes->change_at(shift) }
 sub last_tagged_change { shift->_changes->last_tagged_change }
 
+sub search_changes {
+    my ( $self, %p ) = @_;
+    my $meta = App::Sqitch::Plan::Change->meta;
+
+    my $reverse = 0;
+    if (my $d = delete $p{direction}) {
+        $reverse = $d =~ /^ASC/i  ? 0
+                 : $d =~ /^DESC/i ? 1
+                 : hurl 'Search direction must be either "ASC" or "DESC"';
+    }
+
+    # Limit with regular expressions?
+    my @filters;
+    for my $spec (
+        [ planner => 'planner_name' ],
+        [ name    => 'name'         ],
+    ) {
+        my $regex = delete $p{ $spec->[0] } // next;
+        $regex = qr/$regex/;
+        my $attr = $meta->find_attribute_by_name( $spec->[1] );
+        push @filters => sub { $attr->get_value($_[0]) =~ $regex };
+    }
+
+    # Match events?
+    if (my $op = lc(delete $p{operation} || '') ) {
+        push @filters => $op eq 'deploy' ? sub { $_[0]->is_deploy }
+                       : $op eq 'revert' ? sub { $_[0]->is_revert }
+                       : hurl qq{Unknown change operation "$op"};
+    }
+
+    my $changes = $self->_changes;
+    my $offset  = delete $p{offset} || 0;
+    my $limit   = delete $p{limit}  || 0;
+
+    hurl 'Invalid parameters passed to search_changes(): '
+        . join ', ', sort keys %p if %p;
+
+    # If no filters, we want to return everything.
+    push @filters => sub { 1 } unless @filters;
+
+    if ($reverse) {
+        # Go backwards.
+        my $index  = $changes->count - ($offset + 1);
+        my $end_at = $limit - 1;
+        return sub {
+            while ($index > $end_at) {
+                my $change = $changes->change_at($index--) or return;
+                return $change if any { $_->($change) } @filters;
+            }
+            return;
+        };
+    }
+
+    my $index  = $offset - 1;
+    my $end_at = $limit ? $index + $limit : $changes->count - 1;
+    return sub {
+        while ($index < $end_at) {
+            my $change = $changes->change_at(++$index) or return;
+            return $change if any { $_->($change) } @filters;
+        }
+        return;
+    };
+}
+
 sub seek {
     my ( $self, $key ) = @_;
     my $index = $self->index_of($key);
@@ -643,10 +718,19 @@ sub tag {
         tag => $key
     ) if defined $changes->index_of($key);
 
-    my $change = $changes->last_change or hurl plan => __x(
-        'Cannot apply tag "{tag}" to a plan with no changes',
-        tag => $key
-    );
+
+    my $change;
+    if (my $spec = $p{change}) {
+        $change = $changes->get($spec) or hurl plan => __x(
+            'Unknown change: "{change}"',
+            change => $spec,
+        );
+    } else {
+        $change = $changes->last_change or hurl plan => __x(
+            'Cannot apply tag "{tag}" to a plan with no changes',
+            tag => $key
+        );
+    }
 
     my $tag = App::Sqitch::Plan::Tag->new(
         %p,
@@ -658,7 +742,10 @@ sub tag {
 
     $change->add_tag($tag);
     $changes->index_tag( $changes->index_of( $change->id ), $tag );
-    $self->_lines->append( $tag );
+
+    # Add tag to line list, after the change and any preceding tags.
+    my $lines = $self->_lines;
+    $lines->insert_at( $tag, $lines->index_of($change) + $change->tags );
     return $tag;
 }
 
@@ -807,13 +894,13 @@ sub _is_valid {
         if ($type eq 'change') {
             hurl plan => __x(
                 qq{"{name}" is invalid: changes must not begin with punctuation, }
-                . 'contain "@", ":", or "#", or end in punctuation or digits following punctuation',
+                . 'contain "@", ":", "#", or blanks, or end in punctuation or digits following punctuation',
                 name => $name,
             );
         } else {
             hurl plan => __x(
                 qq{"{name}" is invalid: tags must not begin with punctuation, }
-                . 'contain "@", ":", or "#", or end in punctuation or digits following punctuation',
+                . 'contain "@", ":", "#", or blanks, or end in punctuation or digits following punctuation',
                 name => $name,
             );
         }
@@ -1157,6 +1244,49 @@ passed to the code reference. Iteration terminates when the code reference
 returns false, so be sure to have it return a true value if you want it to
 iterate over every change.
 
+=head3 C<search_changes>
+
+  my $iter = $engine->search_changes( %params );
+  while (my $change = $iter->()) {
+      say '* $change->{event}ed $change->{change}";
+  }
+
+Searches the changes in the plan returns an iterator code reference with the
+results. If no parameters are provided, a list of all changes will be returned
+from the iterator in plan order. The supported parameters are:
+
+=over
+
+=item C<event>
+
+An array of the type of event to search for. Allowed values are "deploy" and
+ "revert".
+
+=item C<name>
+
+Limit the results to changes with names matching the specified regular
+expression.
+
+=item C<planner>
+
+Limit the changes to those added by planners matching the specified regular
+expression.
+
+=item C<limit>
+
+Limit the number of changes to the specified number.
+
+=item C<offset>
+
+Skip the specified number of events.
+
+=item C<direction>
+
+Return the results in the specified order, which must be a value matching
+C</^(:?a|de)sc/i> for "ascending" or "descending".
+
+=back
+
 =head3 C<write_to>
 
   $plan->write_to($file);
@@ -1180,7 +1310,15 @@ script file must be encoded in UTF-8.
 
 Loads the plan data. Called internally, not meant to be called directly, as it
 parses the plan file and deploy scripts every time it's called. If you want
-the all of the changes, call C<changes()> instead.
+the all of the changes, call C<changes()> instead. And if you want to load an
+alternate plan, use C<parse()>.
+
+=head3 C<parse>
+
+  $plan->parse($plan_data);
+
+Load an alternate plan by passing the complete text of the plan. Useful for
+loading a plan from a different VCS branch, for example.
 
 =head3 C<check_changes>
 
@@ -1194,10 +1332,38 @@ succeeding changes.
 
 =head3 C<tag>
 
-  $plan->tag('whee');
+  $plan->tag( name => 'whee' );
 
-Tags the most recent change in the plan. Exits with a fatal error if the tag
-already exists in the plan.
+Tags a change in the plan. Exits with a fatal error if the tag already exists
+in the plan or if a change cannot be found to tag. The supported parameters
+are:
+
+=over
+
+=item C<name>
+
+The tag name to use. Required.
+
+=item C<change>
+
+The change to be tagged, specified as a supported change specification as
+described in L<sqitchchanges>. Defaults to the last change in the plan.
+
+=item C<note>
+
+A brief note about the tag.
+
+=item C<planner_name>
+
+The name of the user adding the tag to the plan. Defaults to the value of the
+C<user.name> configuration variable.
+
+=item C<planner_email>
+
+The email address of the user adding the tag to the plan. Defaults to the
+value of the C<user.email> configuration variable.
+
+=back
 
 =head3 C<add>
 
@@ -1254,8 +1420,9 @@ character or a leading C<+> are to be deployed.
 =item * A tag.
 
 A named deployment tag, generally corresponding to a release name. Begins with
-a C<@>, followed by one or more non-whitespace characters, excluding "@", ":",
-and "#". The first and last characters must not be punctuation characters.
+a C<@>, followed by one or more non-blanks characters, excluding "@", ":",
+"#", and blanks. The first and last characters must not be punctuation
+characters.
 
 =item * A note.
 

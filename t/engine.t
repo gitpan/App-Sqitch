@@ -675,7 +675,7 @@ is_deeply $engine->seen, [
 is $deploy_meth, '_deploy_all', 'Should have called _deploy_all()';
 is_deeply +MockOutput->get_info, [
     [__x 'Adding metadata tables to {destination}',
-        destination => $engine->destination,
+        destination => $engine->meta_destination,
     ],
     [__x 'Deploying changes through {target} to {destination}',
         destination =>  $engine->destination,
@@ -708,7 +708,7 @@ for my $mode (qw(change tag all)) {
     is_deeply +MockOutput->get_info, [
         [
             __x 'Adding metadata tables to {destination}',
-            destination => $engine->destination,
+            destination => $engine->meta_destination,
         ],
         [
             __x 'Deploying changes through {target} to {destination}',
@@ -743,7 +743,7 @@ is_deeply $engine->seen, [
 is $deploy_meth, '_deploy_by_tag', 'Should have called _deploy_by_tag()';
 is_deeply +MockOutput->get_info, [
     [__x 'Deploying changes through {target} to {destination}',
-        destination =>  $engine->destination,
+        destination =>  $engine->meta_destination,
         target      => $plan->get('@alpha')->format_name_with_tags,
     ],
     [__ 'ok'],
@@ -1359,8 +1359,7 @@ is_deeply +MockOutput->get_info, [
 ##############################################################################
 # Test revert().
 can_ok $engine, 'revert';
-my $mock_sqitch = Test::MockModule->new('App::Sqitch');
-$mock_sqitch->mock(plan => $plan);
+$mock_engine->mock(plan => $plan);
 
 # Start with no deployed IDs.
 @deployed_changes = ();
@@ -1639,7 +1638,7 @@ $offset_change = $dbchanges[1];
 push @resolved => $offset_change->id;
 throws_ok { $engine->revert('@alpha') } 'App::Sqitch::X',
     'Should abort declined revert to @alpha';
-is $@->ident, 'revert', 'Declined revert ident should be "revert"';
+is $@->ident, 'revert:confirm', 'Declined revert ident should be "revert:confirm"';
 is $@->exitval, 1, 'Should have exited with value 1';
 is $@->message, __ 'Nothing reverted', 'Should have exited with proper message';
 is_deeply $engine->seen, [

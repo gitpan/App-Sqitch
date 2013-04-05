@@ -10,14 +10,16 @@ use App::Sqitch::X qw(hurl);
 use List::Util qw(first max);
 use namespace::autoclean;
 
-our $VERSION = '0.953';
+our $VERSION = '0.960';
 
 has sqitch => (
     is       => 'ro',
     isa      => 'App::Sqitch',
     required => 1,
-    handles  => { destination => 'db_name', plan => 'plan' },
+    handles  => { destination => 'db_name' },
 );
+
+sub meta_destination { shift->destination }
 
 has start_at => (
     is  => 'rw',
@@ -40,6 +42,14 @@ has max_name_length => (
     is      => 'rw',
     isa     => 'Int',
     default => 0,
+);
+
+has plan => (
+    is       => 'rw',
+    isa      => 'App::Sqitch::Plan',
+    required => 1,
+    lazy     => 1,
+    default  => sub { shift->sqitch->plan }
 );
 
 has _variables => (
@@ -113,7 +123,7 @@ sub deploy {
         unless ($self->initialized) {
             $sqitch->info(__x(
                 'Adding metadata tables to {destination}',
-                destination => $self->destination,
+                destination => $self->meta_destination,
             ));
             $self->initialize;
         }
@@ -159,7 +169,7 @@ sub deploy {
 sub revert {
     my ( $self, $to, $log_only ) = @_;
     my $sqitch = $self->sqitch;
-    my $plan   = $self->sqitch->plan;
+    my $plan   = $self->plan;
 
     my @changes;
 
@@ -201,7 +211,7 @@ sub revert {
             ));
         } else {
             hurl {
-                ident   => 'revert',
+                ident   => 'revert:confirm',
                 message => __ 'Nothing reverted',
                 exitval => 1,
             } unless $sqitch->ask_y_n(__x(
@@ -255,7 +265,7 @@ sub revert {
 sub verify {
     my ( $self, $from, $to ) = @_;
     my $sqitch   = $self->sqitch;
-    my $plan     = $sqitch->plan;
+    my $plan     = $self->plan;
     my @changes  = $self->_load_changes( $self->deployed_changes );
 
     $self->sqitch->info(__x(
@@ -315,7 +325,7 @@ sub verify {
 sub _trim_to {
     my ( $self, $ident, $key, $changes, $pop ) = @_;
     my $sqitch = $self->sqitch;
-    my $plan   = $sqitch->plan;
+    my $plan   = $self->plan;
 
     # Find the change in the database.
     my $to_id = $self->change_id_for_key( $key ) || hurl $ident => (
@@ -351,7 +361,7 @@ sub _verify_changes {
     my $to_idx   = shift;
     my $pending  = shift;
     my $sqitch   = $self->sqitch;
-    my $plan     = $sqitch->plan;
+    my $plan     = $self->plan;
     my $errcount = 0;
     my $i        = -1;
     my @seen;
@@ -604,7 +614,7 @@ sub find_change {
 
 sub _load_changes {
     my $self = shift;
-    my $plan = $self->sqitch->plan;
+    my $plan = $self->plan;
     my (@changes, %seen);
     for my $params (@_) {
         next unless $params;
@@ -713,7 +723,7 @@ sub _deploy_all {
 
 sub _sync_plan {
     my $self = shift;
-    my $plan = $self->sqitch->plan;
+    my $plan = $self->plan;
 
     if (my $id = $self->latest_change_id) {
         my $idx = $plan->index_of($id) // hurl plan => __x(
@@ -838,13 +848,13 @@ sub rollback_work { shift }
 sub earliest_change {
     my $self = shift;
     my $change_id = $self->earliest_change_id(@_) // return undef;
-    return $self->sqitch->plan->get( $change_id );
+    return $self->plan->get( $change_id );
 }
 
 sub latest_change {
     my $self = shift;
     my $change_id = $self->latest_change_id(@_) // return undef;
-    return $self->sqitch->plan->get( $change_id );
+    return $self->plan->get( $change_id );
 }
 
 sub initialized {
@@ -1105,10 +1115,20 @@ uses to find the engine class.
   my $destination = $engine->destination;
 
 Returns the name of the destination database. This will usually be the same as
-the configured database name or the value of the C<--db-name> option. Hover,
+the configured database name or the value of the C<--db-name> option. However,
 subclasses may override it to provide other values, such as when neither of
 the above have values but there is nevertheless a default value assumed by the
 engine. Used internally to name the destination in status messages.
+
+=head3 C<meta_destination>
+
+  my $meta_destination = $engine->meta_destination;
+
+Returns the name of the metadata destination database. In other words, the
+database in which Sqitch's own data is stored. It will usually be the same as
+C<destination()>, but some engines, such as
+L<SQLite|App::Sqitch::Engine::sqlite>, may use a separate database. Uses
+internally to name the destination when the metadata tables are created.
 
 =head3 C<variables>
 
@@ -1847,6 +1867,11 @@ expression.
 
 Limit the events to those logged for the actions of the committers with names
 matching the specified regular expression.
+
+=item C<planner>
+
+Limit the events to those with changes who's planner's name matches the
+specified regular expression.
 
 =item C<limit>
 

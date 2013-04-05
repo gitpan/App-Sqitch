@@ -1,5 +1,39 @@
 Revision history for Perl extension App::Sqitch
 
+0.960  2013-04-05T23:04:35Z
+     - Removed `-CAS` from the shebang line on Perl 5.10.0. This is to
+       eliminate `Too late for "-CAS" option` errors. This means that UTF-8
+       semantics will be suboptimal on Perl 5.10.0. Consider upgrading to 5.12
+       or higher.
+     - Added the `checkout` command. Pass it the name of a VCS branch, and it
+       will compare the plans between that branch and the current branch,
+       revert to the last common change, check out the branch, and then
+       redeploy. This makes it easy to switch between working branches that
+       have different sets of commits. Git-only for now. Idea and code by
+       Ronan Dunklau.
+     - The `rebase` command no longer fails if the database is already
+       reverted, but just makes a note of it and goes on to the deploy.
+     - Added the `plan` command. It's like `log`, but shows a list of changes
+       in the plan, rather than events recorded in the database.
+     - Added `search_changes()` to Plan. Used by the `plan` command.
+     - Added the `--oneline` option to the `log` command.
+     - Allow tagging of an arbitrary change, not just the last change in the
+       plan, by passing a change specification (name, ID, or tag) as the
+       second argument to the `tag` command.
+     - Updated error messages to note that blank characters are not allowed in
+       project, change, or tag names.
+     - Factored most of the engine-specific code into
+       App::Sqitch::Role::DBIEngine. Future DBI-based engines should be able
+       to use this role to handle most of the work.
+     - Factored the live engine tests int `t/lib/DBIEngineTest`. Future
+       DBI-based engines can use this module to do all or most of the live
+       testing.
+     - Added the SQLite engine. The Sqitch metadata is stored in a separate
+       file from a database, by default in the same directory as the database
+       file.
+     - Added `sqitchtutorial-sqlite.pod`, a SQLite-specific variant of
+       `sqitchtutorial.pod`.
+
 0.953  2013-02-21T23:37:57Z
      - Fixed test failure in `t/engine.t` triggered by a clock tick.
      - Changed the verify template to end with `ROLLBACK` rather than

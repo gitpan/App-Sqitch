@@ -1,4 +1,4 @@
-App/Sqitch version 0.953
+App/Sqitch version 0.960
 ========================
 
 This application, `sqitch`, will provide a simple yet robust interface for SQL
@@ -27,7 +27,7 @@ To install this module, type the following:
 Licence
 -------
 
-Copyright (c) 2012 iovation Inc.
+Copyright © 2012 iovation Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
