@@ -31,6 +31,7 @@
       },
       "runtime" : {
          "recommends" : {
+            "Devel::StackTrace" : "1.30",
             "Pod::Simple" : "1.41"
          },
          "requires" : {
@@ -115,6 +116,6 @@
          "url" : "http://github.com/theory/sqitch/"
       }
    },
-   "version" : "0.960"
+   "version" : "0.961"
 }
 

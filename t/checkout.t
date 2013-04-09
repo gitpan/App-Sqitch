@@ -5,6 +5,7 @@ use warnings;
 use v5.10;
 use Test::More;
 use App::Sqitch;
+use utf8;
 use Path::Class qw(dir file);
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
@@ -249,14 +250,17 @@ is_deeply \@rev_parse_args, [qw(--abbrev-ref HEAD)],
 @rev_parse_args = ();
 
 # Should die when the plan file does not exist.
-my $mock_sqitch = Test::MockModule->new(ref $sqitch);
-$mock_sqitch->mock(plan_file => file 'nonesuch.plan');
-throws_ok { $checkout->execute('master') } 'Git::Wrapper::Exception',
-    'Should get an exception for a non-existent plan file';
-is $@->status, 128, 'Exitval should be 128';
-is $@->error, "fatal: Path 'nonesuch.plan' does not exist in 'master'\n",
-     'Should have the proper error output';
-$mock_sqitch->unmock('plan_file');
+SKIP: {
+    skip 'Cannot find git', 3, unless Git::Wrapper->has_git_in_path;
+    my $mock_sqitch = Test::MockModule->new(ref $sqitch);
+    $mock_sqitch->mock(plan_file => file 'nonesuch.plan');
+    throws_ok { $checkout->execute('master') } 'Git::Wrapper::Exception',
+        'Should get an exception for a non-existent plan file';
+    is $@->status, 128, 'Exitval should be 128';
+    is $@->error, "fatal: Path 'nonesuch.plan' does not exist in 'master'\n",
+        'Should have the proper error output';
+    $mock_sqitch->unmock('plan_file');
+}
 
 # Try a plan with nothing in common with the current branch's plan.
 my (@show_args, $showed);

@@ -16,7 +16,7 @@ extends 'App::Sqitch::Engine';
 sub dbh; # required by DBIEngine;
 with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.960';
+our $VERSION = '0.961';
 
 has client => (
     is       => 'ro',
@@ -243,10 +243,30 @@ sub initialize {
     ) if $self->initialized;
 
     my $file = file(__FILE__)->dir->file('pg.sql');
-    $self->_run(
-        '--file' => $file,
-        '--set'  => "sqitch_schema=$schema",
-    );
+
+    # Check the client version.
+    my ($maj, $min) = split /[.]/ => (
+        split / / => $self->sqitch->probe( $self->client, '--version' )
+    )[-1];
+
+    if ($maj < 9) {
+        # Need to write a temp file; no :"sqitch_schema" variable syntax.
+        ($schema) = $self->dbh->selectrow_array(
+            'SELECT quote_ident(?)', undef, $schema
+        );
+        (my $sql = scalar $file->slurp) =~ s{:"sqitch_schema"}{$schema}g;
+        require File::Temp;
+        my $fh = File::Temp->new;
+        print $fh $sql;
+        close $fh;
+        $self->_run( '--file' => $fh->filename );
+    } else {
+        # We can take advantage of the :"sqitch_schema" variable syntax.
+        $self->_run(
+            '--file' => $file,
+            '--set'  => "sqitch_schema=$schema",
+        );
+    }
 
     $self->dbh->do('SET search_path = ?', undef, $schema);
     return $self;
@@ -539,7 +559,8 @@ App::Sqitch::Engine::pg - Sqitch PostgreSQL Engine
 
 =head1 Description
 
-App::Sqitch::Engine::pg provides the PostgreSQL storage engine for Sqitch.
+App::Sqitch::Engine::pg provides the PostgreSQL storage engine for Sqitch. It
+supports PostgreSQL 8.4.0 and higher.
 
 =head1 Interface
 

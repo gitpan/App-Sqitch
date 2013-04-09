@@ -1,5 +1,26 @@
 Revision history for Perl extension App::Sqitch
 
+0.961  2013-04-09T19:21:15Z
+     - Fixed error when running on PostgreSQL 9.0.
+     - Added support for PostgreSQL 8.4.
+     - Fixed the SQLite tests to skip the live tests when `sqlite3` cannot be
+       found.
+     - Fixed the Postgres tests to skip the live tests if `psql` cannot be
+       found or cannot connect to the database.
+     - Fixed the `checkout` test to skip tests that depend on Git and Git is
+       not found in the path.
+     - Fixed test failures on Windows (hopefully).
+     - Made the order of commented configuration variables in the project
+       configuration file deterministic. It will now always be the same order
+       as specified by the engine class. This fixes test failures on Perl
+       5.17.
+     - Fixed encoding issue that caused test failures on Perl 5.17.
+     - Requiring Devel::StackTrace 1.30, as earlier versions can
+       intermittently suppress errors.
+     - Added hack to `App::Sqitch::X::hurl()` to work around a bug in
+       Throwable that prevents `previous_exception` from being set half the
+       time on v5.17.
+
 0.960  2013-04-05T23:04:35Z
      - Removed `-CAS` from the shebang line on Perl 5.10.0. This is to
        eliminate `Too late for "-CAS" option` errors. This means that UTF-8

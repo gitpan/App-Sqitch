@@ -10,7 +10,7 @@ use Role::Identifiable::HasIdent 0.005;
 use Role::Identifiable::HasTags 0.005;
 use overload '""' => 'as_string';
 
-our $VERSION = '0.960';
+our $VERSION = '0.961';
 
 has message => (
     is       => 'ro',
@@ -25,6 +25,7 @@ has exitval => (
     default  => 2,
 );
 
+
 with qw(
     Throwable
     Role::HasMessage
@@ -33,11 +34,16 @@ with qw(
 );
 
 has '+ident' => (default => 'DEV');
+has '+previous_exception' => (init_arg => 'previous_exception');
 
 sub hurl {
     @_ = (
         __PACKAGE__,
-        ref $_[0]     ? $_[0]
+        # Always pass $@, as Throwable is unreliable about getting it thanks
+        # to hash randomization. Its workaround in v0.200006:
+        # https://github.com/rjbs/throwable/commit/596dfbafed970a30324dc21539d4edf2cbda767a
+        previous_exception => $@,
+        ref $_[0]     ? %{ $_[0] }
             : @_ == 1 ? (message => $_[0])
             :           (ident => $_[0],  message => $_[1])
     );
@@ -54,7 +60,7 @@ sub as_string {
 }
 
 __PACKAGE__->meta->make_immutable(inline_constructor => 0);
-no Mouse;
+no Moose;
 
 __END__
 
@@ -64,17 +70,7 @@ App::Sqitch::X - Sqitch Exception class
 
 =head1 Synopsis
 
-Throw:
-
   use Locale::TextDomain;
-  use App::Sqitch::X;
-  open my $fh, '>', 'foo.txt' or App::Sqitch::X->throw(
-      ident   => 'io',
-      message => __x 'Cannot open {file}: {err}", file => 'foo.txt', err => $!,
-  );
-
-Hurl:
-
   use App::Sqitch::X qw(hurl);
   open my $fh, '>', 'foo.txt' or hurl {
       ident   => 'io',
@@ -93,40 +89,11 @@ handled, showing the error message to the user.
 
 =head1 Interface
 
-=head2 Class Method
-
-=head3 C<throw()>
-
-  open my $fh, '>', 'foo.txt' or App::Sqitch::X->throw(
-      ident   => 'io',
-      message => __x 'Cannot open {file}: {err}", file => 'foo.txt', err => $!,
-  );
-
-Throws an exception. The supported parameters include:
-
-=over
-
-=item C<ident>
-
-A non-localized string identifying the type of exception.
-
-=item C<message>
-
-The exception message. Use L<Locale::TextDomain> to craft localized messages.
-
-=item C<exitval>
-
-Suggested exit value to use. Defaults to 2. This will be used if Sqitch
-handles an exception while a command is running.
-
-=back
-
 =head2 Function
 
 =head3 C<hurl>
 
-To save yourself some typing, you can import the C<hurl> keyword and pass the
-parameters as a hash reference, like so:
+Throws an exception. Pass the parameters as a hash reference, like so:
 
   use App::Sqitch::X qw(hurl);
   open my $fh, '>', 'foo.txt' or hurl {
@@ -149,6 +116,25 @@ the C<ident>:
 In this case, the C<ident> will be C<DEV>, which you should not otherwise use.
 Sqitch will emit a more detailed error message, including a stack trace, when
 it sees C<DEV> exceptions.
+
+The supported parameters are:
+
+=over
+
+=item C<ident>
+
+A non-localized string identifying the type of exception.
+
+=item C<message>
+
+The exception message. Use L<Locale::TextDomain> to craft localized messages.
+
+=item C<exitval>
+
+Suggested exit value to use. Defaults to 2. This will be used if Sqitch
+handles an exception while a command is running.
+
+=back
 
 =head2 Methods
 
