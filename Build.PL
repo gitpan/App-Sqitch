@@ -16,7 +16,7 @@ my %module_build_args = (
     "Test::Dir" => 0,
     "Test::Exception" => 0,
     "Test::File" => 0,
-    "Test::File::Contents" => "0.05",
+    "Test::File::Contents" => "0.20",
     "Test::MockModule" => "0.05",
     "Test::More" => "0.94",
     "Test::NoWarnings" => "0.083"
@@ -29,7 +29,7 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.961",
+  "dist_version" => "0.962",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {

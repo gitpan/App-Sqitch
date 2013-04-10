@@ -1,5 +1,5 @@
 Name:           sqitch
-Version:        0.961
+Version:        0.962
 Release:        1%{?dist}
 Summary:        Sane database change management
 License:        MIT
@@ -15,6 +15,7 @@ BuildRequires:  perl(Config::GitLike) >= 1.09
 BuildRequires:  perl(constant)
 BuildRequires:  perl(DateTime)
 BuildRequires:  perl(DBI)
+BuildRequires:  perl(Devel::StackTrace) >= 1.30
 BuildRequires:  perl(Digest::SHA1)
 BuildRequires:  perl(Encode)
 BuildRequires:  perl(File::Basename)
@@ -59,7 +60,7 @@ BuildRequires:  perl(Test::Deep)
 BuildRequires:  perl(Test::Dir)
 BuildRequires:  perl(Test::Exception)
 BuildRequires:  perl(Test::File)
-BuildRequires:  perl(Test::File::Contents) >= 0.05
+BuildRequires:  perl(Test::File::Contents) >= 0.20
 BuildRequires:  perl(Test::MockModule) >= 0.05
 BuildRequires:  perl(Test::More) >= 0.94
 BuildRequires:  perl(Test::NoWarnings) >= 0.083
@@ -188,6 +189,12 @@ package bundles the Sqitch SQLite support.
 # No additional files required.
 
 %changelog
+* Tue Apr 10 2013 David E. Wheeler <david.wheeler@iovation.com> 0.962-1
+- upgrade to v0.962.
+
+* Tue Apr 9 2013 David E. Wheeler <david.wheeler@iovation.com> 0.961-1
+- upgrade to v0.961.
+
 * Mon Apr 8 2013 David E. Wheeler <david.wheeler@iovation.com> 0.960-2
 - Add missing dependency on Git::Wrapper.
 

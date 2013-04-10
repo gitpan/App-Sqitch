@@ -13,7 +13,7 @@ use App::Sqitch;
 use App::Sqitch::Plan;
 use Test::MockModule;
 use Test::File;
-use Test::File::Contents;
+use Test::File::Contents 0.20;
 
 my $CLASS;
 
@@ -96,7 +96,8 @@ $sqitch_mocker->mock(run => sub {
     file_exists_ok $fn, 'Temp file should exist';
 
     ( my $prompt = $CLASS->note_prompt(for => $for) ) =~ s/^/# /gms;
-    file_contents_is $fn, "$/$prompt$/", 'Temp file contents should include prompt';
+    file_contents_is $fn, "$/$prompt$/", 'Temp file contents should include prompt',
+        { encoding => 'UTF-8' };
 
     if ($note) {
         open my $fh, '>:encoding(UTF-8)', $fn or die "Cannot open $fn: $!";
