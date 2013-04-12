@@ -47,7 +47,6 @@
             "File::Path" : "0",
             "File::Temp" : "0",
             "Getopt::Long" : "0",
-            "Git::Wrapper" : "0",
             "Hash::Merge" : "0",
             "IO::Pager" : "0",
             "IPC::System::Simple" : "1.17",
@@ -116,6 +115,6 @@
          "url" : "http://github.com/theory/sqitch/"
       }
    },
-   "version" : "0.962"
+   "version" : "0.963"
 }
 

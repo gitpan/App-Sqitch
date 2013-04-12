@@ -16,7 +16,7 @@ extends 'App::Sqitch::Engine';
 sub dbh; # required by DBIEngine;
 with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.962';
+our $VERSION = '0.963';
 
 has client => (
     is       => 'ro',
@@ -73,8 +73,9 @@ has dbh => (
     lazy    => 1,
     default => sub {
         my $self = shift;
-        eval "require DBD::SQLite";
-        hurl sqlite => __ 'DBD::SQLite module required to manage PostgreSQL' if $@;
+        local $@;
+        eval 'require DBD::SQLite';
+        hurl sqlite => __ 'DBD::SQLite module required to manage SQLite' if $@;
 
         my $dsn = 'dbi:SQLite:dbname=' . ($self->sqitch_db || hurl sqlite => __(
             'No database specified; use --db-name set "ore.sqlite.db_name" via sqitch config'

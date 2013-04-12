@@ -1,5 +1,24 @@
 Revision history for Perl extension App::Sqitch
 
+0.963  2013-04-12T19:11:29Z
+     - Fixed a test failure when Git is in the execution path and the test is
+       not run from a Git checkout.
+     - Added `plan` to `sqitchchanges`, the contents of which are shown when
+       Sqitch is run with no command.
+     - Removed the unique constraint on tag names in the database, as it
+       prevented two projects from having the same tag name. Replaced it with
+       a unique constraint on the project and tag names. Folks with production
+       PostgreSQL installs should run these queries:
+           ALTER TABLE sqitch.tags DROP CONSTRAINT tags_tag_key, ADD UNIQUE(project, tag);
+           COMMENT ON COLUMN sqitch.tags.tag IS 'Project-unique tag name.';
+     - Fixed failing tests when DBD::SQLite is not installed.
+     - Removed dependency on Git::Wrapper. The `checkout` command does things
+       very simply, and we already have tools for running command-line
+       applications. So we just take advantage of that. The code is no more
+       complicated than it was before.
+     - Added the `core.vcs.client` configuration setting. Defaults to `git`
+       (or `git.exe` on Windows).
+
 0.962  2013-04-10T17:10:05Z
      - Fixed failing test on Perl 5.12 and lower.
      - Fixed the French translation by re-encoding it in UTF-8 (Ronan

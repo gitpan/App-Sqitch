@@ -89,7 +89,6 @@ lib/sqitchchanges.pod
 lib/sqitchcommands.pod
 lib/sqitchtutorial-sqlite.pod
 lib/sqitchtutorial.pod
-meta.db
 t/add.t
 t/add_change.conf
 t/base.t

@@ -29,7 +29,7 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.962",
+  "dist_version" => "0.963",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {
@@ -50,7 +50,6 @@ my %module_build_args = (
     "File::Path" => 0,
     "File::Temp" => 0,
     "Getopt::Long" => 0,
-    "Git::Wrapper" => 0,
     "Hash::Merge" => 0,
     "IO::Pager" => 0,
     "IPC::System::Simple" => "1.17",

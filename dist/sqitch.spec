@@ -1,5 +1,5 @@
 Name:           sqitch
-Version:        0.962
+Version:        0.963
 Release:        1%{?dist}
 Summary:        Sane database change management
 License:        MIT
@@ -26,7 +26,6 @@ BuildRequires:  perl(File::Spec)
 BuildRequires:  perl(File::Temp)
 BuildRequires:  perl(Getopt::Long)
 BuildRequires:  perl(Hash::Merge)
-BuildRequires:  perl(Git::Wrapper)
 BuildRequires:  perl(IO::Pager)
 BuildRequires:  perl(IPC::System::Simple) >= 1.17
 BuildRequires:  perl(List::Util)
@@ -74,6 +73,7 @@ Requires:       perl(Config)
 Requires:       perl(Config::GitLike) >= 1.09
 Requires:       perl(constant)
 Requires:       perl(DateTime)
+Requires:       perl(Devel::StackTrace) >= 1.30
 Requires:       perl(Digest::SHA1)
 Requires:       perl(Encode)
 Requires:       perl(File::Basename)
@@ -189,11 +189,16 @@ package bundles the Sqitch SQLite support.
 # No additional files required.
 
 %changelog
+* Thu Apr 12 2013 David E. Wheeler <david.wheeler@iovation.com> 0.963-1
+- Upgrade to v0.963.
+- Add missing dependency on Devel::StackTrace 1.30.
+- Remove dependency on Git::Wrapper.
+
 * Tue Apr 10 2013 David E. Wheeler <david.wheeler@iovation.com> 0.962-1
-- upgrade to v0.962.
+- Upgrade to v0.962.
 
 * Tue Apr 9 2013 David E. Wheeler <david.wheeler@iovation.com> 0.961-1
-- upgrade to v0.961.
+- Upgrade to v0.961.
 
 * Mon Apr 8 2013 David E. Wheeler <david.wheeler@iovation.com> 0.960-2
 - Add missing dependency on Git::Wrapper.
