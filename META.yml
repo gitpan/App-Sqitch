@@ -4,7 +4,6 @@ author:
   - 'David E. Wheeler <david@justatheory.com>'
 build_requires:
   Capture::Tiny: 0.12
-  DBD::SQLite: 0
   File::Spec: 0
   FindBin: 0
   Module::Build: 0.35
@@ -87,4 +86,4 @@ resources:
   bugtracker: http://github.com/theory/sqitch/issues/
   homepage: http://sqitch.org/
   repository: http://github.com/theory/sqitch/
-version: 0.963
+version: 0.964

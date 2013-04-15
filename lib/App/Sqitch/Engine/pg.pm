@@ -16,7 +16,7 @@ extends 'App::Sqitch::Engine';
 sub dbh; # required by DBIEngine;
 with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.963';
+our $VERSION = '0.964';
 
 has client => (
     is       => 'ro',
@@ -154,9 +154,9 @@ has dbh => (
     lazy    => 1,
     default => sub {
         my $self = shift;
-        local $@;
-        eval "require DBD::Pg";
-        hurl pg => __ 'DBD::Pg module required to manage PostgreSQL' if $@;
+        try { require DBD::Pg } catch {
+            hurl pg => __ 'DBD::Pg module required to manage PostgreSQL' if $@;
+        };
 
         my $dsn = 'dbi:Pg:' . join ';' => map {
             "$_->[0]=$_->[1]"

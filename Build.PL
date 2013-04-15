@@ -8,7 +8,6 @@ use lib qw{inc}; use Module::Build::Sqitch;
 my %module_build_args = (
   "build_requires" => {
     "Capture::Tiny" => "0.12",
-    "DBD::SQLite" => 0,
     "File::Spec" => 0,
     "FindBin" => 0,
     "Module::Build" => "0.35",
@@ -29,7 +28,7 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.963",
+  "dist_version" => "0.964",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {

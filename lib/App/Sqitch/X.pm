@@ -10,7 +10,7 @@ use Role::Identifiable::HasIdent 0.005;
 use Role::Identifiable::HasTags 0.005;
 use overload '""' => 'as_string';
 
-our $VERSION = '0.963';
+our $VERSION = '0.964';
 
 has message => (
     is       => 'ro',
@@ -34,7 +34,8 @@ with qw(
 );
 
 has '+ident' => (default => 'DEV');
-has '+previous_exception' => (init_arg => 'previous_exception');
+has '+previous_exception' => (init_arg => 'previous_exception')
+    if Throwable->VERSION < 0.200007;
 
 sub hurl {
     @_ = (
