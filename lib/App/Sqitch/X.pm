@@ -10,7 +10,7 @@ use Role::Identifiable::HasIdent 0.005;
 use Role::Identifiable::HasTags 0.005;
 use overload '""' => 'as_string';
 
-our $VERSION = '0.964';
+our $VERSION = '0.965';
 
 has message => (
     is       => 'ro',
@@ -53,7 +53,7 @@ sub hurl {
 
 sub as_string {
     my $self = shift;
-    join $/, grep { defined } (
+    join "\n", grep { defined } (
         $self->message,
         $self->previous_exception,
         $self->stack_trace

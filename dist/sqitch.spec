@@ -1,5 +1,5 @@
 Name:           sqitch
-Version:        0.964
+Version:        0.965
 Release:        1%{?dist}
 Summary:        Sane database change management
 License:        MIT
@@ -189,6 +189,9 @@ package bundles the Sqitch SQLite support.
 # No additional files required.
 
 %changelog
+* Tue Apr 23 2013 David E. Wheeler <david.wheeler@iovation.com> 0.965-1
+- Upgrade to v0.965.
+
 * Mon Apr 15 2013 David E. Wheeler <david.wheeler@iovation.com> 0.964-1
 - Upgrade to v0.964.
 

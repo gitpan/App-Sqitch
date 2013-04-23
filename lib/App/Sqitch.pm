@@ -23,7 +23,7 @@ use Mouse::Util::TypeConstraints;
 use MouseX::Types::Path::Class 0.06;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.964';
+our $VERSION = '0.965';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -391,7 +391,7 @@ sub _parse_core_opts {
     if ( delete $opts{version} ) {
         require File::Basename;
         my $fn = File::Basename::basename($0);
-        print $fn, ' (', __PACKAGE__, ') ', __PACKAGE__->VERSION, $/;
+        print $fn, ' (', __PACKAGE__, ') ', __PACKAGE__->VERSION, "\n";
         exit;
     }
 
