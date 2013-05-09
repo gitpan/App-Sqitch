@@ -15,7 +15,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.965';
+our $VERSION = '0.970';
 
 has requires => (
     is       => 'ro',
@@ -226,7 +226,7 @@ sub _add {
         hurl add => $msg;
     }
 
-    my $fh = $file->open('>:utf8') or hurl add => __x(
+    my $fh = $file->open('>:utf8_strict') or hurl add => __x(
         'Cannot open {file}: {error}',
         file  => $file,
         error => $!
@@ -252,7 +252,7 @@ sub _add {
 
 sub _slurp {
     my ( $self, $tmpl ) = @_;
-    open my $fh, "<:encoding(UTF-8)", $tmpl or hurl add => __x(
+    open my $fh, "<:utf8_strict", $tmpl or hurl add => __x(
         'Cannot open {file}: {error}',
         file  => $tmpl,
         error => $!

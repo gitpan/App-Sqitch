@@ -33,6 +33,8 @@ lib/App/Sqitch/Command/verify.pm
 lib/App/Sqitch/Config.pm
 lib/App/Sqitch/DateTime.pm
 lib/App/Sqitch/Engine.pm
+lib/App/Sqitch/Engine/oracle.pm
+lib/App/Sqitch/Engine/oracle.sql
 lib/App/Sqitch/Engine/pg.pm
 lib/App/Sqitch/Engine/pg.sql
 lib/App/Sqitch/Engine/sqlite.pm
@@ -87,9 +89,10 @@ lib/sqitch-verify.pod
 lib/sqitch.pod
 lib/sqitchchanges.pod
 lib/sqitchcommands.pod
+lib/sqitchtutorial-oracle.pod
 lib/sqitchtutorial-sqlite.pod
 lib/sqitchtutorial.pod
-meta.db
+lib/sqitchusage.pod
 t/add.t
 t/add_change.conf
 t/base.t
@@ -127,6 +130,7 @@ t/linelist.t
 t/local.conf
 t/log.t
 t/options.t
+t/oracle.t
 t/pg.t
 t/plan.t
 t/plan_command.t

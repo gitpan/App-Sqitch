@@ -13,7 +13,7 @@ use namespace::autoclean;
 use Try::Tiny;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.965';
+our $VERSION = '0.970';
 
 my %FORMATS;
 $FORMATS{raw} = <<EOF;
@@ -194,13 +194,15 @@ sub execute {
         planner   => $self->planner_pattern,
         limit     => $self->max_count,
         offset    => $self->skip,
-        direction => $self->reverse ? 'ASC' : 'DESC',
+        direction => $self->reverse ? 'DESC' : 'ASC',
     );
 
     # Send the results.
     my $formatter = $self->formatter;
     my $format    = $self->format;
-    $self->page( __x 'In {file}', file => $self->sqitch->plan_file );
+    $self->page( '# ', __x 'Project: {project}', project => $plan->project );
+    $self->page( '# ', __x 'File:    {file}', file => $self->sqitch->plan_file );
+    $self->page('');
     while ( my $change = $iter->() ) {
         $self->page( $formatter->format( $format, {
             event         => $change->is_deploy ? 'deploy' : 'revert',

@@ -7,6 +7,8 @@ use Mouse;
 use App::Sqitch::X qw(hurl);
 use Locale::TextDomain qw(App-Sqitch);
 
+our $VERSION = '0.970';
+
 has name => (
     is       => 'ro',
     isa      => 'Str',
@@ -92,14 +94,14 @@ sub request_note {
     # Edit in a file.
     require File::Temp;
     my $tmp = File::Temp->new;
-    binmode $tmp, ':encoding(UTF-8)';
+    binmode $tmp, ':utf8_strict';
     ( my $prompt = $self->note_prompt(%p) ) =~ s/^/# /gms;
     $tmp->print( "\n", $prompt, "\n" );
     $tmp->close;
 
     $self->sqitch->run( $self->sqitch->editor, "$tmp" );
 
-    open my $fh, '<:encoding(UTF-8)', $tmp or hurl add => __x(
+    open my $fh, '<:utf8_strict', $tmp or hurl add => __x(
         'Cannot open {file}: {error}',
         file  => $tmp,
         error => $!

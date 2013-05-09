@@ -14,7 +14,7 @@ use Try::Tiny;
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.965';
+our $VERSION = '0.970';
 
 has show_changes => (
     is      => 'ro',
@@ -97,23 +97,21 @@ sub execute {
     # Emit the state basics.
     $self->emit_state($state);
 
-    # If we have no access to the project plan, we can't emit the status.
+    # Emit changes and tags, if required.
+    $self->emit_changes;
+    $self->emit_tags;
+
     my $plan_proj = try { $self->plan->project };
-    if ( !defined $plan_proj || $self->project ne $plan_proj ) {
+    if (defined $plan_proj && $self->project eq $plan_proj ) {
+        $self->emit_status($state);
+    } else {
+        # If we have no access to the project plan, we can't emit the status.
         $self->comment('');
         $self->emit(__x(
             'Status unknown. Use --plan-file to assess "{project}" status',
             project => $self->project,
         ));
-        return $self;
     }
-
-    # Emit changes and tags, if required.
-    $self->emit_changes;
-    $self->emit_tags;
-
-    # Emit the overall status.
-    $self->emit_status($state);
 
     return $self;
 }

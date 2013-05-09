@@ -28,11 +28,10 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.965",
+  "dist_version" => "0.970",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {
-    "Devel::StackTrace" => "1.30",
     "Pod::Simple" => "1.41"
   },
   "recursive_test_files" => 1,
@@ -41,6 +40,7 @@ my %module_build_args = (
     "Config::GitLike" => "1.09",
     "DBI" => 0,
     "DateTime" => 0,
+    "Devel::StackTrace" => "1.30",
     "Digest::SHA1" => 0,
     "Encode" => 0,
     "File::Basename" => 0,
@@ -51,6 +51,7 @@ my %module_build_args = (
     "Getopt::Long" => 0,
     "Hash::Merge" => 0,
     "IO::Pager" => 0,
+    "IPC::Run3" => 0,
     "IPC::System::Simple" => "1.17",
     "List::MoreUtils" => 0,
     "List::Util" => 0,
@@ -64,6 +65,7 @@ my %module_build_args = (
     "MouseX::Types::Path::Class" => "0.06",
     "POSIX" => 0,
     "Path::Class" => 0,
+    "PerlIO::utf8_strict" => 0,
     "Pod::Find" => 0,
     "Pod::Usage" => 0,
     "Role::HasMessage" => "0.005",

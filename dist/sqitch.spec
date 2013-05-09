@@ -1,5 +1,5 @@
 Name:           sqitch
-Version:        0.965
+Version:        0.970
 Release:        1%{?dist}
 Summary:        Sane database change management
 License:        MIT
@@ -27,6 +27,7 @@ BuildRequires:  perl(File::Temp)
 BuildRequires:  perl(Getopt::Long)
 BuildRequires:  perl(Hash::Merge)
 BuildRequires:  perl(IO::Pager)
+BuildRequires:  perl(IPC::Run3)
 BuildRequires:  perl(IPC::System::Simple) >= 1.17
 BuildRequires:  perl(List::Util)
 BuildRequires:  perl(List::MoreUtils)
@@ -41,6 +42,7 @@ BuildRequires:  perl(namespace::autoclean) >= 0.11
 BuildRequires:  perl(parent)
 BuildRequires:  perl(overload)
 BuildRequires:  perl(Path::Class)
+BuildRequires:  perl(PerlIO::utf8_strict)
 BuildRequires:  perl(Pod::Find)
 BuildRequires:  perl(Pod::Usage)
 BuildRequires:  perl(POSIX)
@@ -85,6 +87,7 @@ Requires:       perl(FindBin)
 Requires:       perl(Getopt::Long)
 Requires:       perl(Hash::Merge)
 Requires:       perl(IO::Pager)
+Requires:       perl(IPC::Run3)
 Requires:       perl(IPC::System::Simple) >= 1.17
 Requires:       perl(List::Util)
 Requires:       perl(List::MoreUtils)
@@ -98,6 +101,7 @@ Requires:       perl(namespace::autoclean) >= 0.11
 Requires:       perl(parent)
 Requires:       perl(overload)
 Requires:       perl(Path::Class)
+Requires:       perl(PerlIO::utf8_strict)
 Requires:       perl(Pod::Find)
 Requires:       perl(Pod::Usage)
 Requires:       perl(POSIX)
@@ -188,7 +192,27 @@ package bundles the Sqitch SQLite support.
 %files sqlite
 # No additional files required.
 
+%package oracle
+Summary:        Sane database change management for Oracle
+Group:          Development/Libraries
+Requires:       sqitch >= %{version}
+Requires:       oracle-instantclient11.2-sqlplus
+Requires:       perl(DBI)
+Requires:       perl(DBD::Oracle)
+
+%description oracle
+Sqitch provides a simple yet robust interface for database change
+management. The philosophy and functionality is inspired by Git. This
+package bundles the Sqitch Oracle support.
+
+%files oracle
+# No additional files required.
+
 %changelog
+* Wed May 8 2013 David E. Wheeler <david.wheeler@iovation.com> 0.970-1
+- Upgrade to v0.970.
+- Add sqitch-oracle.
+
 * Tue Apr 23 2013 David E. Wheeler <david.wheeler@iovation.com> 0.965-1
 - Upgrade to v0.965.
 

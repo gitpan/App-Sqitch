@@ -23,7 +23,7 @@ use Mouse::Util::TypeConstraints;
 use MouseX::Types::Path::Class 0.06;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.965';
+our $VERSION = '0.970';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -40,7 +40,7 @@ BEGIN {
 
     subtype 'CoreEngine', as 'Str', where {
         hurl core => __x('Unknown engine: {engine}', engine => $_)
-            unless $_ ~~ [qw(pg sqlite)];
+            unless $_ ~~ [qw(pg sqlite oracle)];
         1;
     };
 
@@ -269,7 +269,7 @@ has pager => (
         } unless IO::Pager->can('say');
 
         my $fh = IO::Pager->new(\*STDOUT);
-        $fh->binmode(':encoding(UTF-8)') if eval { $fh->isa('IO::Pager') };
+        $fh->binmode(':utf8_strict') if eval { $fh->isa('IO::Pager') };
         $fh;
     },
 );
@@ -358,7 +358,7 @@ sub _split_args {
         '<>' => sub { die '!FINISH' },
         # Count how many args we've processed until we die.
         map { $_ => m/=/ ? $add_two : $add_one } $self->_core_opts
-    ) or $self->_pod2usage;
+    ) or $self->_pod2usage('sqitchusage', '-verbose' => 99 );
 
     # Splice the command and its options out of the arguments.
     my ( $cmd, @cmd_opts ) = splice @args, $cmd_at;
@@ -376,7 +376,7 @@ sub _parse_core_opts {
             $k =~ s/-/_/g;
             $_ => \$opts{$k};
         } $self->_core_opts
-    ) or $self->_pod2usage;
+    ) or $self->_pod2usage('sqitchusage', '-verbose' => 99 );
 
     # Handle documentation requests.
     if ($opts{help} || $opts{man}) {
@@ -531,7 +531,14 @@ sub spool {
     }
 
     local $SIG{PIPE} = sub { die 'spooler pipe broke' };
-    print $pipe $_ while <$fh>;
+    if (ref $fh eq 'ARRAY') {
+        for my $h (@{ $fh }) {
+            print $pipe $_ while <$h>;
+        }
+    } else {
+        print $pipe $_ while <$fh>;
+    }
+
     close $pipe or hurl io => $! ? __x(
         'Error closing pipe to {command}: {error}',
          command => $_[0],
@@ -797,9 +804,11 @@ Like C<capture>, but returns just the C<chomp>ed first line of output.
 =head3 C<spool>
 
   $sqitch->spool($sql_file_handle, 'sqlite3', 'my.db');
+  $sqitch->spool(\@file_handles, 'sqlite3', 'my.db');
 
-Like run, but spools the contents of a file handle to the standard input the
-system command. Returns true on success and throws an exception on failure.
+Like run, but spools the contents of one or ore file handle to the standard
+input the system command. Returns true on success and throws an exception on
+failure.
 
 =head3 C<trace>
 

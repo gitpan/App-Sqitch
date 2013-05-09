@@ -10,7 +10,7 @@ use App::Sqitch::X qw(hurl);
 use List::Util qw(first max);
 use namespace::autoclean;
 
-our $VERSION = '0.965';
+our $VERSION = '0.970';
 
 has sqitch => (
     is       => 'ro',
@@ -1144,7 +1144,9 @@ Get, set, and clear engine variables. Variables are defined as key/value pairs
 to be passed to the engine client in calls to C<deploy> and C<revert>, if the
 client supports variables. For example, the
 L<PostgreSQL engine|App::Sqitch::Engine::pg> passes all the variables to
-the C<psql> client via the C<--set> option.
+the C<psql> client via the C<--set> option, while the
+L<Oracle engine|App::Sqitch::Engine::oracle> engine sets them via the
+SQL*Plus C<DEFINE> command.
 
 =head3 C<deploy>
 

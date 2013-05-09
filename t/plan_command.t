@@ -568,7 +568,7 @@ is_deeply $search_args, [
     planner   => undef,
     limit     => undef,
     offset    => undef,
-    direction => 'DESC'
+    direction => 'ASC'
 ], 'The proper args should have been passed to search_events';
 
 my $fmt_params = {
@@ -585,7 +585,9 @@ my $fmt_params = {
     planner_email => $change->planner_email,
 };
 is_deeply +MockOutput->get_page, [
-    [__x 'In {file}', file => $sqitch->plan_file ],
+    ['# ', __x 'Project: {project}', project => $sqitch->plan->project ],
+    ['# ', __x 'File:    {file}', file => $sqitch->plan_file ],
+    [''],
     [ $cmd->formatter->format( $cmd->format, $fmt_params ) ],
 ], 'The event should have been paged';
 
@@ -610,7 +612,7 @@ is_deeply $search_args, [
     planner   => '.+',
     limit     => 10,
     offset    => 5,
-    direction => 'ASC'
+    direction => 'DESC'
 ], 'All params should have been passed to search_events';
 
 my $fmt_params2 = {
@@ -628,7 +630,9 @@ my $fmt_params2 = {
 };
 
 is_deeply +MockOutput->get_page, [
-    [__x 'In {file}', file => $sqitch->plan_file],
+    ['# ', __x 'Project: {project}', project => $sqitch->plan->project ],
+    ['# ', __x 'File:    {file}', file => $sqitch->plan_file ],
+    [''],
     [ $cmd->formatter->format( $cmd->format, $fmt_params  ) ],
     [ $cmd->formatter->format( $cmd->format, $fmt_params2 ) ],
 ], 'Both events should have been paged';
