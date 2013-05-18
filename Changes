@@ -1,5 +1,21 @@
 Revision history for Perl extension App::Sqitch
 
+0.971  2013-05-18T21:08:51Z
+     - Removed most uses of the smartmatch operator, since as of Perl 5.17.11
+       it is marked as experimental, and silenced the warning where it is
+       still used.
+     - Added 0.1s sleep between logging changes back-to-back in the engine
+       tests, mostly to try to get SQLite to generate different timestamps.
+       Pretty sure the recent test failures have been due to the passage of
+       less than a millisecond between the two inserts.
+     - Added the `shell` and `quote_shell` methods to Sqitch.pm for shelling
+       out a command.
+     - Sqitch now shells out to an editor when opening a file for the user to
+       edit. For example, if the `$EDITOR` environment variable is set to
+       `"emacs -nw"`, it will now work. Thanks to Florian Ragwitz for the
+       report (issue #80).
+     - Removed the pod-checking tests from the distribution.
+
 0.970 2013-05-09T00:21:06Z
      - Fixed the default ordering of changes displayed by the `plan` command.
        They are now ascending by default.

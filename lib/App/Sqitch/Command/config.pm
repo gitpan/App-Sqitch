@@ -14,7 +14,7 @@ use Mouse::Util::TypeConstraints;
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.970';
+our $VERSION = '0.971';
 
 has file => (
     is      => 'ro',
@@ -321,7 +321,9 @@ sub edit {
     my $self = shift;
 
     # Let the editor deal with locking.
-    $self->run( $self->sqitch->editor, $self->file );
+    $self->shell(
+        $self->sqitch->editor . ' ' . $self->quote_shell( $self->file )
+    );
 }
 
 sub rename_section {

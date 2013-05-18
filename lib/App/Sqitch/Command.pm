@@ -10,7 +10,7 @@ use App::Sqitch::X qw(hurl);
 use Hash::Merge 'merge';
 use Mouse;
 
-our $VERSION = '0.970';
+our $VERSION = '0.971';
 
 has sqitch => (
     is       => 'ro',
@@ -20,6 +20,8 @@ has sqitch => (
         plan
         engine
         run
+        shell
+        quote_shell
         capture
         probe
         verbosity

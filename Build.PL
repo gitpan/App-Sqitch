@@ -7,18 +7,7 @@ use lib qw{inc}; use Module::Build::Sqitch;
 
 my %module_build_args = (
   "build_requires" => {
-    "Capture::Tiny" => "0.12",
-    "File::Spec" => 0,
-    "FindBin" => 0,
-    "Module::Build" => "0.35",
-    "Test::Deep" => 0,
-    "Test::Dir" => 0,
-    "Test::Exception" => 0,
-    "Test::File" => 0,
-    "Test::File::Contents" => "0.20",
-    "Test::MockModule" => "0.05",
-    "Test::More" => "0.94",
-    "Test::NoWarnings" => "0.083"
+    "Module::Build" => "0.35"
   },
   "configure_requires" => {
     "Module::Build" => "0.35"
@@ -28,7 +17,7 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.970",
+  "dist_version" => "0.971",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {
@@ -73,6 +62,7 @@ my %module_build_args = (
     "Role::Identifiable::HasTags" => "0.005",
     "StackTrace::Auto" => 0,
     "String::Formatter" => 0,
+    "String::ShellQuote" => 0,
     "Sub::Exporter" => 0,
     "Sub::Exporter::Util" => 0,
     "Sys::Hostname" => 0,
@@ -83,6 +73,7 @@ my %module_build_args = (
     "URI" => 0,
     "User::pwent" => 0,
     "constant" => 0,
+    "if" => 0,
     "namespace::autoclean" => "0.11",
     "overload" => 0,
     "parent" => 0,
@@ -93,9 +84,36 @@ my %module_build_args = (
   },
   "script_files" => [
     "bin/sqitch"
-  ]
+  ],
+  "test_requires" => {
+    "Capture::Tiny" => "0.12",
+    "File::Spec" => 0,
+    "FindBin" => 0,
+    "Test::Deep" => 0,
+    "Test::Dir" => 0,
+    "Test::Exception" => 0,
+    "Test::File" => 0,
+    "Test::File::Contents" => "0.20",
+    "Test::MockModule" => "0.05",
+    "Test::More" => "0.94",
+    "Test::NoWarnings" => "0.083",
+    "Time::HiRes" => 0
+  }
 );
 
+
+unless ( eval { Module::Build->VERSION(0.4004) } ) {
+  my $tr = delete $module_build_args{test_requires};
+  my $br = $module_build_args{build_requires};
+  for my $mod ( keys %$tr ) {
+    if ( exists $br->{$mod} ) {
+      $br->{$mod} = $tr->{$mod} if $tr->{$mod} > $br->{$mod};
+    }
+    else {
+      $br->{$mod} = $tr->{$mod};
+    }
+  }
+}
 
 my $build = Module::Build::Sqitch->new(%module_build_args);
 

@@ -22,7 +22,7 @@ BEGIN {
     $ENV{ANSI_COLORS_DISABLED} = 1 unless CAN_OUTPUT_COLOR;
 }
 
-our $VERSION = '0.970';
+our $VERSION = '0.971';
 
 has abbrev => (
     is      => 'ro',
@@ -50,6 +50,7 @@ has formatter => (
     isa     => 'String::Formatter',
     default => sub {
         my $self = shift;
+        no if $] >= 5.017011, warnings => 'experimental::smartmatch';
         String::Formatter->new({
             input_processor => 'require_single_input',
             string_replacer => 'method_replace',

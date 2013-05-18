@@ -146,8 +146,6 @@ t/plans/pragmas.plan
 t/plans/project_deps.plan
 t/plans/reserved-tag.plan
 t/plans/widgets.plan
-t/pod-coverage.t
-t/pod.t
 t/pragma.t
 t/read.pl
 t/rebase.t
@@ -168,4 +166,6 @@ t/tag_cmd.t
 t/user.conf
 t/verify.t
 t/x.t
+xt/release/pod-coverage.t
 xt/release/pod-spelling.t
+xt/release/pod.t
