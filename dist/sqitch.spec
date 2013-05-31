@@ -1,5 +1,5 @@
 Name:           sqitch
-Version:        0.971
+Version:        0.972
 Release:        1%{?dist}
 Summary:        Sane database change management
 License:        MIT
@@ -52,6 +52,7 @@ BuildRequires:  perl(Role::Identifiable::HasTags) >= 0.005
 BuildRequires:  perl(StackTrace::Auto)
 BuildRequires:  perl(strict)
 BuildRequires:  perl(String::Formatter)
+BuildRequires:  perl(String::ShellQuote)
 BuildRequires:  perl(Sub::Exporter)
 BuildRequires:  perl(Sub::Exporter::Util)
 BuildRequires:  perl(Sys::Hostname)
@@ -111,6 +112,7 @@ Requires:       perl(Role::Identifiable::HasTags) >= 0.005
 Requires:       perl(StackTrace::Auto)
 Requires:       perl(strict)
 Requires:       perl(String::Formatter)
+Requires:       perl(String::ShellQuote)
 Requires:       perl(Sub::Exporter)
 Requires:       perl(Sub::Exporter::Util)
 Requires:       perl(Sys::Hostname)
@@ -209,6 +211,12 @@ package bundles the Sqitch Oracle support.
 # No additional files required.
 
 %changelog
+* Fri May 31 2013 David E. Wheeler <david.wheeler@iovation.com> 0.972-1
+- Upgrade to v0.972.
+
+* Sat May 18 2013 David E. Wheeler <david.wheeler@iovation.com> 0.971-1
+- Upgrade to v0.971.
+
 * Wed May 8 2013 David E. Wheeler <david.wheeler@iovation.com> 0.970-1
 - Upgrade to v0.970.
 - Add sqitch-oracle.
