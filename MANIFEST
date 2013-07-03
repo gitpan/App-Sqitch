@@ -93,6 +93,7 @@ lib/sqitchtutorial-oracle.pod
 lib/sqitchtutorial-sqlite.pod
 lib/sqitchtutorial.pod
 lib/sqitchusage.pod
+meta.db
 t/add.t
 t/add_change.conf
 t/base.t

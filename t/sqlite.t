@@ -56,9 +56,14 @@ is_deeply [$sqlite->sqlite3], [$sqlite->client, @std_opts, $sqlite->db_name],
 isa_ok $sqlite = $CLASS->new(sqitch => $sqitch), $CLASS;
 my $have_sqlite = try { require DBD::SQLite };
 if ($have_sqlite) {
+    my @v = split /[.]/ => DBI->connect('DBI:SQLite:')->{sqlite_version};
+    $have_sqlite = $v[0] > 3 || ($v[0] == 3 && ($v[1] > 7 || ($v[1] == 7 && $v[2] >= 11)));
+}
+
+if ($have_sqlite) {
     throws_ok { $sqlite->dbh } 'App::Sqitch::X', 'Should get an error for no db name';
     is $@->ident, 'sqlite', 'Missing db name error ident should be "sqlite"';
-    is $@->message, __ 'No database specified; use --db-name set "ore.sqlite.db_name" via sqitch config',
+    is $@->message, __ 'No database specified; use --db-name set "core.sqlite.db_name" via sqitch config',
         'Missing db name error message should be correct';
 } else {
     throws_ok { $sqlite->dbh } 'App::Sqitch::X',
@@ -133,7 +138,7 @@ is_deeply \@capture, [$sqlite->sqlite3, qw(foo bar baz)],
 
 # Test file and handle running.
 SKIP: {
-    skip 'DBD::SQLite not installed', 2 unless $have_sqlite;
+    skip 'DBD::SQLite not available', 2 unless $have_sqlite;
     ok $sqlite->run_file('foo/bar.sql'), 'Run foo/bar.sql';
     is_deeply \@run, [$sqlite->sqlite3, ".read 'foo/bar.sql'"],
         'File should be passed to run()';
@@ -144,7 +149,7 @@ is_deeply \@spool, ['FH', $sqlite->sqlite3],
     'Handle should be passed to spool()';
 
 SKIP: {
-    skip 'DBD::SQLite not installed', 2 unless $have_sqlite;
+    skip 'DBD::SQLite not available', 2 unless $have_sqlite;
 
     # Verify should go to capture unless verosity is > 1.
     ok $sqlite->run_verify('foo/bar.sql'), 'Verify foo/bar.sql';
@@ -192,7 +197,15 @@ DBIEngineTest->run(
     alt_engine_params => [ db_name => $db_name, sqitch_db => $alt_db ],
     skip_unless       => sub {
         my $self = shift;
+
+        # Should have the database handle and client.
         $self->dbh && $self->sqitch->probe( $self->client, '-version' );
++
+        # Make sure we have a supported version.
+        my $version = $self->dbh->{sqlite_version};
+        my @v = split /[.]/ => $version;
+        die "SQLite >= 3.7.11 required; DBD::SQLite built with $version\n"
+            unless $v[0] > 3 || ($v[0] == 3 && ($v[1] > 7 || ($v[1] == 7 && $v[2] >= 11)));
     },
     engine_err_regex  => qr/^near "blah": syntax error/,
     init_error        =>  __x(

@@ -1,5 +1,5 @@
 Name:           sqitch
-Version:        0.972
+Version:        0.973
 Release:        1%{?dist}
 Summary:        Sane database change management
 License:        MIT
@@ -211,6 +211,9 @@ package bundles the Sqitch Oracle support.
 # No additional files required.
 
 %changelog
+* Wed Jul 3 2013 David E. Wheeler <david.wheeler@iovation.com> 0.973-1
+- Upgrade to v0.973.
+
 * Fri May 31 2013 David E. Wheeler <david.wheeler@iovation.com> 0.972-1
 - Upgrade to v0.972.
 
