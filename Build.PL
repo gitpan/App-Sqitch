@@ -17,7 +17,7 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.973",
+  "dist_version" => "0.980",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {
@@ -25,13 +25,13 @@ my %module_build_args = (
   },
   "recursive_test_files" => 1,
   "requires" => {
-    "Config" => 0,
     "Config::GitLike" => "1.09",
     "DBI" => 0,
     "DateTime" => 0,
     "Devel::StackTrace" => "1.30",
     "Digest::SHA1" => 0,
     "Encode" => 0,
+    "Encode::Locale" => 0,
     "File::Basename" => 0,
     "File::Copy" => 0,
     "File::HomeDir" => 0,
@@ -97,7 +97,8 @@ my %module_build_args = (
     "Test::MockModule" => "0.05",
     "Test::More" => "0.94",
     "Test::NoWarnings" => "0.083",
-    "Time::HiRes" => 0
+    "Time::HiRes" => 0,
+    "lib" => 0
   }
 );
 

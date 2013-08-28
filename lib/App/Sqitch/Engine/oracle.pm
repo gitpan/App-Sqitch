@@ -1,10 +1,5 @@
 package App::Sqitch::Engine::oracle;
 
-# Environment variables required to test:
-# * ORAUSER
-# * ORAPASS
-# * TWO_TASK
-
 use 5.010;
 use Mouse;
 use utf8;
@@ -21,7 +16,7 @@ extends 'App::Sqitch::Engine';
 sub dbh; # required by DBIEngine;
 with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.973';
+our $VERSION = '0.980';
 
 BEGIN {
     # We tell the Oracle connector which encoding to use. The last part of the
@@ -223,6 +218,8 @@ sub _ts2char_format {
 }
 
 sub _ts_default { 'current_timestamp' }
+
+sub _can_limit { 0 }
 
 sub _char2ts {
     my $dt = $_[1];

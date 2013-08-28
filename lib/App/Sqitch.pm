@@ -15,7 +15,7 @@ use Locale::Messages qw(bind_textdomain_filter);
 use App::Sqitch::X qw(hurl);
 use Mouse 1.04;
 use Mouse::Meta::Attribute::Native 1.04;
-use Encode qw(encode_utf8);
+use Encode ();
 use Try::Tiny;
 use List::Util qw(first);
 use IPC::System::Simple 1.17 qw(runx capturex $EXITVAL);
@@ -23,7 +23,7 @@ use Mouse::Util::TypeConstraints;
 use MouseX::Types::Path::Class 0.06;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.973';
+our $VERSION = '0.980';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -41,7 +41,7 @@ BEGIN {
     subtype 'CoreEngine', as 'Str', where {
         my $e = $_;
         hurl core => __x('Unknown engine: {engine}', engine => $_)
-            unless first { $e eq $_ } qw(pg sqlite oracle);
+            unless first { $e eq $_ } qw(pg sqlite mysql oracle);
         1;
     };
 
@@ -184,12 +184,16 @@ has sysuser => (
     lazy     => 1,
     default  => sub {
         # Adapted from User.pm.
-        return getlogin
-            || scalar getpwuid( $< )
+        require Encode::Locale;
+        return Encode::decode( locale => getlogin )
+            || Encode::decode( locale => scalar getpwuid( $< ) )
             || $ENV{ LOGNAME }
             || $ENV{ USER }
             || $ENV{ USERNAME }
-            || try { require Win32; Win32::LoginName() };
+            || try {
+                require Win32;
+                Encode::decode( locale => Win32::LoginName() )
+            };
     },
 );
 
@@ -209,7 +213,9 @@ has user_name => (
                 return $info->{fullName} || $sysname;
             }
             require User::pwent;
-            (User::pwent::getpwnam($sysname)->gecos)[0] || $sysname;
+            my $name = (User::pwent::getpwnam($sysname)->gecos)[0]
+                || return $sysname;
+            return  $^O eq 'darwin' ? Encode::decode_utf8 $name : $name;
         };
     }
 );
@@ -352,9 +358,9 @@ sub _split_args {
     my $add_one = sub { $cmd_at++ };
     my $add_two = sub { $cmd_at += 2 };
 
-    Getopt::Long::Configure(qw(bundling));
     Getopt::Long::GetOptionsFromArray(
-        [@args],
+        # remove bundled options, or we lose track of our position.
+        [map { /^-([^-]{2,})/ ? '-' . substr $1, -1 : $_ } @args],
         # Halt processing on on first non-option, which will be the command.
         '<>' => sub { die '!FINISH' },
         # Count how many args we've processed until we die.

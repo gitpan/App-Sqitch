@@ -12,7 +12,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.973';
+our $VERSION = '0.980';
 
 has requires => (
     is       => 'ro',
@@ -161,10 +161,9 @@ App::Sqitch::Command::rework - Rework a Sqitch change
 
 =head1 Description
 
-Reworks a new deployment change. This will result in the creation of a scripts
-in the deploy, revert, and verify directories. The scripts are based on
-L<Template::Tiny> templates in F<~/.sqitch/templates/> or
-C<$(etc_path)/templates>.
+Reworks a change. This will result in the copying of the existing deploy,
+revert, and verify scripts for the change to preserve the earlier instances of
+the change.
 
 =head1 Interface
 

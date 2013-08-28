@@ -1,9 +1,9 @@
-App/Sqitch version 0.973
+App/Sqitch version 0.980
 ========================
 
 [Sqitch](http://sqitch.org/) is a database change management application. It
-currently supports PostgreSQL 8.4 and higher, SQLite 3, and Oracle 10g and
-higher.
+currently supports PostgreSQL 8.4 and higher, SQLite 3.7.11 and higher, MySQL
+5.6.4 and higher,, and Oracle 10g and higher.
 
 What makes it different from your typical
 [migration](http://guides.rubyonrails.org/migrations.html) approaches? A few
@@ -55,17 +55,34 @@ Want to learn more? The best place to start is in the tutorials:
 
 * [Introduction to Sqitch on PostgreSQL](lib/sqitchtutorial.pod)
 * [Introduction to Sqitch on SQLite](lib/sqitchtutorial-sqlite.pod)
+* [Introduction to Sqitch on Oracle](lib/sqitchtutorial-oracle.pod)
+* [Introduction to Sqitch on MySQL](lib/sqitchtutorial-mysql.pod)
 
 Installation
 ------------
 
-To install this module, type the following:
+[![Build Status](https://travis-ci.org/theory/sqitch.png)](https://travis-ci.org/theory/sqitch)
+
+To install Sqitch from a distribution download, type the following:
 
     perl Build.PL
     ./Build installdeps
     ./Build
     ./Build test
     ./Build install
+
+From a Git clone, first install
+[Dist::Zilla](https://metacpan.org/module/Dist::Zilla), then use it to install
+Sqitch and its dependencies:
+
+    cpan Dist::Zilla
+    dzil install
+
+To run Sqitch directly from the Git clone execute `t/sqitch`. If you're doing
+development on Sqitch, you will need to install the autoring dependencies, as
+well:
+
+    dzil listdeps | xargs cpan
 
 Licence
 -------

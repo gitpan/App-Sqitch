@@ -16,7 +16,7 @@ extends 'App::Sqitch::Engine';
 sub dbh; # required by DBIEngine;
 with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.973';
+our $VERSION = '0.980';
 
 has client => (
     is       => 'ro',
@@ -60,8 +60,9 @@ has sqitch_db => (
             return file $db;
         }
         if (my $db = $self->db_name) {
-            (my $fn = $db->basename) =~ s/([.][^.]+)?$/-sqitch$1/;
-            return $db->dir->file($fn);
+            my ($suffix) = $db->basename =~ /(.[^.]+)$/;
+            $suffix //= '';
+            return $db->dir->file("sqitch$suffix");
         }
         return undef;
     },
@@ -78,7 +79,7 @@ has dbh => (
         };
 
         my $dsn = 'dbi:SQLite:dbname=' . ($self->sqitch_db || hurl sqlite => __(
-            'No database specified; use --db-name set "core.sqlite.db_name" via sqitch config'
+            'No database specified; use --db-name or set "core.sqlite.db_name" via sqitch config'
         ));
 
         my $dbh = DBI->connect($dsn, '', '', {

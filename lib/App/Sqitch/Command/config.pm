@@ -14,7 +14,7 @@ use Mouse::Util::TypeConstraints;
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.973';
+our $VERSION = '0.980';
 
 has file => (
     is      => 'ro',
@@ -30,17 +30,17 @@ has action => (
     is  => 'ro',
     isa => enum([qw(
         get
-        get-all
-        get-regex
+        get_all
+        get_regex
         set
         unset
         list
         edit
         add
-        replace-all
-        unset-all
-        rename-section
-        remove-section
+        replace_all
+        unset_all
+        rename_section
+        remove_section
     )]),
 );
 
@@ -69,7 +69,7 @@ sub options {
 
         get
         get-all
-        get-regex
+        get-regex|get-regexp
         add
         replace-all
         unset
@@ -445,7 +445,7 @@ The action to be executed. May be one of:
 
 =item * C<get-all>
 
-=item * C<get-regex>
+=item * C<get-regexp>
 
 =item * C<set>
 

@@ -95,11 +95,11 @@ Have a look at F<~/.sqitch/sqitch.conf> and you'll see this:
   	email = marge@example.com
 
 Which means that Sqitch will always properly identify us when planning and
-committing changes.Back to the repository. Have a look at the plan file,
+committing changes. Back to the repository. Have a look at the plan file,
 F<sqitch.plan>:
 
   > cat sqitch.plan
-  %syntax-version=1.0.0-b1
+  %syntax-version=1.0.0-b2
   %project=flipr
   %uri=https://github.com/theory/sqitch-oracle-intro/
   
@@ -439,8 +439,8 @@ this:
 
 A few things to notice here. On the second line, the dependence on the
 C<appschema> change has been listed in a comment. This doesn't do anything,
-but the default C<deploy> template lists it here for your reference while
-editing the file. Useful, right?
+but the default SQLite C<deploy> template lists it here for your reference
+while editing the file. Useful, right?
 
 The table itself will been created in the C<flipr> schema. This is why we need
 to require the C<appschema> change.

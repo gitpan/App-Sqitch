@@ -1,5 +1,5 @@
 Name:           sqitch
-Version:        0.973
+Version:        0.980
 Release:        1%{?dist}
 Summary:        Sane database change management
 License:        MIT
@@ -18,6 +18,7 @@ BuildRequires:  perl(DBI)
 BuildRequires:  perl(Devel::StackTrace) >= 1.30
 BuildRequires:  perl(Digest::SHA1)
 BuildRequires:  perl(Encode)
+BuildRequires:  perl(Encode::Locale)
 BuildRequires:  perl(File::Basename)
 BuildRequires:  perl(File::Copy)
 BuildRequires:  perl(File::HomeDir)
@@ -79,12 +80,12 @@ Requires:       perl(DateTime)
 Requires:       perl(Devel::StackTrace) >= 1.30
 Requires:       perl(Digest::SHA1)
 Requires:       perl(Encode)
+Requires:       perl(Encode::Locale)
 Requires:       perl(File::Basename)
 Requires:       perl(File::Copy)
 Requires:       perl(File::HomeDir)
 Requires:       perl(File::Path)
 Requires:       perl(File::Temp)
-Requires:       perl(FindBin)
 Requires:       perl(Getopt::Long)
 Requires:       perl(Hash::Merge)
 Requires:       perl(IO::Pager)
@@ -166,7 +167,7 @@ rm -rf $RPM_BUILD_ROOT
 Summary:        Sane database change management for PostgreSQL
 Group:          Development/Libraries
 Requires:       sqitch >= %{version}
-Requires:       postgresql
+Requires:       postgresql >= 8.4.0
 Requires:       perl(DBI)
 Requires:       perl(DBD::Pg)
 
@@ -184,7 +185,7 @@ Group:          Development/Libraries
 Requires:       sqitch >= %{version}
 Requires:       sqlite
 Requires:       perl(DBI)
-Requires:       perl(DBD::SQLite) >= 1.31
+Requires:       perl(DBD::SQLite) >= 1.37
 
 %description sqlite
 Sqitch provides a simple yet robust interface for database change
@@ -210,7 +211,31 @@ package bundles the Sqitch Oracle support.
 %files oracle
 # No additional files required.
 
+%package mysql
+Summary:        Sane database change management for MySQL
+Group:          Development/Libraries
+Requires:       sqitch >= %{version}
+Requires:       mysql >= 5.6.4
+Requires:       perl(DBI)
+Requires:       perl(DBD::mysql) >= 4.018
+
+%description mysql
+Sqitch provides a simple yet robust interface for database change
+management. The philosophy and functionality is inspired by Git. This
+package bundles the Sqitch MySQL support.
+
+%files mysql
+# No additional files required.
+
 %changelog
+* Tue Aug 28 2013 David E. Wheeler <david.wheeler@iovation.com> 0.980-1
+- Upgrade to v0.980.
+- Require Encode::Locale.
+- Require DBD::SQLite 1.37.
+- Require PostgreSQL 8.4.0.
+- Remove FindBin requirement.
+- Add sqitch-mysql.
+
 * Wed Jul 3 2013 David E. Wheeler <david.wheeler@iovation.com> 0.973-1
 - Upgrade to v0.973.
 

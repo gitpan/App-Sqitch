@@ -7,7 +7,7 @@ use Mouse;
 use App::Sqitch::X qw(hurl);
 use Locale::TextDomain qw(App-Sqitch);
 
-our $VERSION = '0.973';
+our $VERSION = '0.980';
 
 has name => (
     is       => 'ro',
@@ -78,8 +78,8 @@ sub BUILDARGS {
     my $p = @_ == 1 && ref $_[0] ? { %{ +shift } } : { @_ };
     if (my $note = $p->{note}) {
         # Trim and then encode newlines.
-        $note =~ s/\A\v+//;
-        $note =~ s/\v+\z//;
+        $note =~ s/\A\s+//;
+        $note =~ s/\s+\z//;
         $note =~ s/(\\[\\nr])/$unescape{$1}/g;
         $p->{note} = $note;
     }

@@ -1210,6 +1210,7 @@ file_contents_is $to,
     '%syntax-version=' . App::Sqitch::Plan::SYNTAX_VERSION . "\n"
     . $file->slurp(iomode => '<:utf8_strict')
     . $tag->as_string . "\n",
+    { encoding => 'UTF-8' },
     'The contents should include the "w00t" tag';
 # Try passing the tag name with a leading @.
 ok my $tag2 = $plan->tag( name => '@alpha' ), 'Add tag "@alpha"';
@@ -1293,6 +1294,7 @@ file_contents_is $to,
     . $tag->as_string . "\n"
     . $tag2->as_string . "\n\n"
     . $new_change->as_string . "\n",
+    { encoding => 'UTF-8' },
     'The contents should include the "booyah" change';
 
 # Make sure dependencies are verified.
@@ -1424,6 +1426,7 @@ is $@->message, __x(
 
 ##############################################################################
 # Try reworking a change.
+can_ok $plan, 'rework';
 ok my $rev_change = $plan->rework( name => 'you' ), 'Rework change "you"';
 isa_ok $rev_change, 'App::Sqitch::Plan::Change';
 is $rev_change->name, 'you', 'Reworked change should be "you"';
@@ -1434,7 +1437,6 @@ is_deeply [ map { $_->format_name } $orig->rework_tags ],
     [qw(@bar)], 'And it should have the one rework tag';
 is $orig->deploy_file, $sqitch->deploy_dir->file('you@bar.sql'),
     'The original file should now be named you@bar.sql';
-can_ok $plan, 'rework';
 is $rev_change->as_string,
     'you [you@bar] ' . $rev_change->timestamp->as_string . ' '
     . $rev_change->format_planner,

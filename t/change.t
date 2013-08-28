@@ -10,6 +10,7 @@ use Test::NoWarnings;
 use App::Sqitch;
 use App::Sqitch::Plan;
 use App::Sqitch::Plan::Tag;
+use Encode qw(encode_utf8);
 use Locale::TextDomain qw(App-Sqitch);
 use Test::Exception;
 use Path::Class;
@@ -63,10 +64,10 @@ can_ok $CLASS, qw(
     note_prompt
 );
 
-my $sqitch = App::Sqitch->new( top_dir => dir('sql') );
+my $sqitch = App::Sqitch->new( top_dir => dir('test-change') );
 my $plan   = App::Sqitch::Plan->new(sqitch => $sqitch);
-make_path 'sql';
-END { remove_tree 'sql' };
+make_path 'test-change';
+END { remove_tree 'test-change' };
 my $fn = $sqitch->plan_file;
 open my $fh, '>', $fn or die "Cannot open $fn: $!";
 say $fh "%project=change\n\n";
@@ -158,7 +159,7 @@ is $change->old_info, join("\n",
    'date ' . $change->timestamp->as_string,
 ), 'Old change info should be correct';
 is $change->old_id, do {
-    my $content = $change->old_info;
+    my $content = encode_utf8 $change->old_info;
     Digest::SHA1->new->add(
         'change ' . length($content) . "\0" . $content
     )->hexdigest;
@@ -171,7 +172,7 @@ is $change->info, join("\n",
    'date ' . $change->timestamp->as_string,
 ), 'Change info should be correct';
 is $change->id, do {
-    my $content = $change->info;
+    my $content = encode_utf8 $change->info;
     Digest::SHA1->new->add(
         'change ' . length($content) . "\0" . $content
     )->hexdigest;
@@ -205,7 +206,7 @@ ok my $change2 = $CLASS->new(
     ropspace  => ' ',
     rspace    => "\t",
     suffix    => '@beta',
-    note      => 'blah blah blah',
+    note      => 'blah blah blah ',
     pspace    => '  ',
     requires  => [map { dep $_ } qw(foo bar @baz)],
     conflicts => [dep '!dr_evil'],
@@ -291,9 +292,9 @@ is $change2->verify_file, $sqitch->verify_dir->file(@fn),
 
 ##############################################################################
 # Test open_script.
-make_path dir(qw(sql deploy))->stringify;
-file(qw(sql deploy baz.sql))->touch;
-my $change2_file = file qw(sql deploy bar.sql);
+make_path dir(qw(test-change deploy))->stringify;
+file(qw(test-change deploy baz.sql))->touch;
+my $change2_file = file qw(test-change deploy bar.sql);
 $fh = $change2_file->open('>:utf8_strict') or die "Cannot open $change2_file: $!\n";
 $fh->say('-- This is a comment');
 $fh->say('# And so is this');
@@ -312,7 +313,7 @@ ok $change2 = $CLASS->new( name => 'bar', plan => $plan ),
 ok $fh = $change2->deploy_handle, 'Get deploy handle';
 is $fh->getline, "-- This is a comment\n", 'It should be the deploy file';
 
-make_path dir(qw(sql revert))->stringify;
+make_path dir(qw(test-change revert))->stringify;
 $fh = $change2->revert_file->open('>')
     or die "Cannot open " . $change2->revert_file . ": $!\n";
 $fh->say('-- revert it, baby');
@@ -320,7 +321,7 @@ $fh->close;
 ok $fh = $change2->revert_handle, 'Get revert handle';
 is $fh->getline, "-- revert it, baby\n", 'It should be the revert file';
 
-make_path dir(qw(sql verify))->stringify;
+make_path dir(qw(test-change verify))->stringify;
 $fh = $change2->verify_file->open('>')
     or die "Cannot open " . $change2->verify_file . ": $!\n";
 $fh->say('-- verify it, baby');
@@ -332,7 +333,7 @@ is $fh->getline, "-- verify it, baby\n", 'It should be the verify file';
 # Test the requires/conflicts params.
 my $file = file qw(t plans multi.plan);
 my $sqitch2 = App::Sqitch->new(
-    top_dir   => dir('sql'),
+    top_dir   => dir('test-change'),
     plan_file => $file,
 );
 my $plan2 = $sqitch2->plan;

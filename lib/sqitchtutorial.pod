@@ -18,8 +18,13 @@ We'll start by creating new project from scratch, a fictional antisocial
 networking site called Flipr. All examples use L<Git|http://git-scm.com/> as
 the VCS and L<PostgreSQL|http://www.postgresql.org/> as the storage engine,
 but for the most part you can substitute other VCSes and database engines in
-the examples as appropriate. If you'd like to manage an SQLite database, see
-L<sqitchtutorial-sqlite>.
+the examples as appropriate.
+
+If you'd like to manage an SQLite database, see L<sqitchtutorial-sqlite>.
+
+If you'd like to manage an Oracle database, see L<sqitchtutorial-oracle>.
+
+If you'd like to manage an MySQL database, see L<sqitchtutorial-mysql>.
 
 =head1 Starting a New Project
 
@@ -103,7 +108,7 @@ that it will always properly identify us when planning and committing changes.
 Back to the repository. Have a look at the plan file, F<sqitch.plan>:
 
   > cat sqitch.plan
-  %syntax-version=1.0.0-b1
+  %syntax-version=1.0.0-b2
   %project=flipr
   %uri=https://github.com/theory/sqitch-intro/
   
@@ -155,8 +160,8 @@ Now we can try deploying this change:
 
 First Sqitch created the metadata tables used to track database changes. The
 structure and name of the metadata tables varies between databases (PostgreSQL
-uses a schema to namespace its metadata, while SQLite uses a separate
-database). Next, Sqitch deploys changes. We only have one so far; the C<+>
+uses a schema to namespace its metadata, while SQLite and MySQL use separate
+databases). Next, Sqitch deploys changes. We only have one so far; the C<+>
 reinforces the idea that the change is being C<added> to the database.
 
 With this change deployed, if you connect to the database, you'll be able to
@@ -422,8 +427,8 @@ this:
 
 A few things to notice here. On the second line, the dependence on the
 C<appschema> change has been listed. This doesn't do anything, but the default
-C<deploy> template lists it here for your reference while editing the file.
-Useful, right?
+C<deploy> PostgreSQL template lists it here for your reference while editing
+the file. Useful, right?
 
 Notice that all of the SQL code is wrapped in a transaction. This is handy for
 PostgreSQL deployments, because PostgreSQL DDLs are transactional. The upshot
@@ -1142,10 +1147,6 @@ Ah, that looks a bit better. Let's have a look at the plan:
   %project=flipr
   %uri=https://github.com/theory/sqitch-intro/
 
-  %syntax-version=1.0.0-b2
-  %project=flipr
-  %uri=https://github.com/theory/sqitch-intro/
-
   appschema 2012-12-29T01:08:29Z Marge N. O’Vera <marge@example.com> # App schema for all flipr objects.
   users [appschema] 2012-12-31T19:38:06Z Marge N. O’Vera <marge@example.com> # Creates table to track our users.
   insert_user [users appschema] 2012-12-31T22:44:27Z Marge N. O’Vera <marge@example.com> # Creates a function to insert a user.
@@ -1467,10 +1468,6 @@ Go ahead and rework the C<change_pass> change, too:
 
 And make this change to F<deploy/change_pass.sql>:
 
-  diff --git a/deploy/change_pass.sql b/deploy/change_pass.sql
-  index b2e7422..352649e 100644
-  --- a/deploy/change_pass.sql
-  +++ b/deploy/change_pass.sql
   @@ -1,6 +1,7 @@
    -- Deploy change_pass
    -- requires: users

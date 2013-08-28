@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 use utf8;
-use Test::More tests => 91;
+use Test::More tests => 94;
 #use Test::More 'no_plan';
 use App::Sqitch;
 use Locale::TextDomain qw(App-Sqitch);
@@ -22,7 +22,7 @@ $ENV{SQITCH_USER_CONFIG} = 'nonexistent.user';
 $ENV{SQITCH_SYSTEM_CONFIG} = 'nonexistent.sys';
 
 ok my $sqitch = App::Sqitch->new(
-    top_dir => Path::Class::Dir->new('sql'),
+    top_dir => Path::Class::Dir->new('test-status'),
     _engine => 'sqlite',
 ), 'Load a sqitch object';
 my $config = $sqitch->config;
@@ -57,7 +57,10 @@ my $engine_mocker = Test::MockModule->new('App::Sqitch::Engine::sqlite');
 my @projs;
 $engine_mocker->mock( registered_projects => sub { @projs });
 my $initialized;
-$engine_mocker->mock( initialized => sub { $initialized } );
+$engine_mocker->mock( initialized => sub {
+    diag "Gonna return $initialized" if $ENV{RELEASE_TESTING};
+    $initialized;
+} );
 
 # Start with uninitialized database.
 $initialized = 0;
@@ -78,10 +81,10 @@ isa_ok $status = $CLASS->new(
 ), $CLASS, 'new status command';
 is $status->project, 'foo', 'Should have project "foo"';
 
-# Look up the project in the databse.
+# Look up the project in the database.
 ok $sqitch = App::Sqitch->new(
     _engine => 'sqlite',
-    top_dir => Path::Class::Dir->new('sql'),
+    top_dir => Path::Class::Dir->new('test-status'),
 ), 'Load a sqitch object with SQLite';
 ok $status = $CLASS->new(sqitch => $sqitch), 'Create another status command';
 
@@ -149,7 +152,7 @@ is $@->message, __x(
     format => 'non',
 ), 'Invalid date format error message should be correct';
 
-#######################################################################################
+##############################################################################
 # Test emit_state().
 my $dt = App::Sqitch::DateTime->new(
     year       => 2012,
@@ -492,3 +495,13 @@ is $@->message, __ 'No changes deployed',
 is_deeply +MockOutput->get_comment, [
     [__x 'On database {db}', db => $sqitch->engine->destination ],
 ], 'The "On database" comment should have been emitted';
+
+# Test with no initilization.
+$initialized = 0;
+$engine_mocker->mock( initialized => sub { $initialized } );
+$engine_mocker->mock( current_state => sub { die 'No Sqitch tables' } );
+throws_ok { $status->execute } 'App::Sqitch::X',
+    'Should get an error for uninitialized db';
+is $@->ident, 'status', 'Uninitialized db error ident should be "status"';
+is $@->message, __ 'Database not initialized for Sqitch',
+    'Uninitialized db error message should be correct';

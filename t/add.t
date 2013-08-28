@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 use utf8;
-use Test::More tests => 91;
+use Test::More tests => 118;
 #use Test::More 'no_plan';
 use App::Sqitch;
 use Locale::TextDomain qw(App-Sqitch);
@@ -20,7 +20,8 @@ use MockOutput;
 my $CLASS = 'App::Sqitch::Command::add';
 
 ok my $sqitch = App::Sqitch->new(
-    top_dir => Path::Class::Dir->new('sql'),
+    top_dir => Path::Class::Dir->new('test-add'),
+    _engine => 'pg',
 ), 'Load a sqitch sqitch object';
 my $config = $sqitch->config;
 
@@ -63,7 +64,7 @@ is_deeply [$CLASS->options], [qw(
     requires|r=s@
     conflicts|c=s@
     note|n=s@
-    set|s=s%
+    template-name|template|t=s
     template-directory=s
     deploy-template=s
     revert-template=s
@@ -123,6 +124,13 @@ is $@->message, __x(
     dir => 'README.md',
 ), 'Invalid directory error message should be correct';
 
+is_deeply $CLASS->configure($config, { template_name => 'foo' }), {
+    requires  => [],
+    conflicts => [],
+    note      => [],
+    template_name => 'foo',
+}, 'Should set up template name option';
+
 is_deeply $CLASS->configure($config, {
     deploy => 1,
     revert => 1,
@@ -149,6 +157,7 @@ CONFIG: {
     my $dir = dir 't';
     is_deeply $CLASS->configure($config, {}), {
         template_directory => $dir,
+        template_name      => 'hi',
         requires  => [],
         conflicts => [],
         note      => [],
@@ -156,6 +165,7 @@ CONFIG: {
 
     is_deeply $CLASS->configure($config, {set => { yo => 'dawg' }}), {
         template_directory => $dir,
+        template_name      => 'hi',
         requires  => [],
         conflicts => [],
         note      => [],
@@ -168,6 +178,7 @@ CONFIG: {
 
     is_deeply $CLASS->configure($config, {set => { foo => 'ick' }}), {
         template_directory => $dir,
+        template_name      => 'hi',
         requires  => [],
         conflicts => [],
         note      => [],
@@ -185,6 +196,7 @@ is_deeply $add->conflicts, [], 'Conflicts should be an arrayref';
 is_deeply $add->note, [], 'Notes should be an arrayref';
 is_deeply $add->variables, {}, 'Varibles should be a hashref';
 is $add->template_directory, undef, 'Default dir should be undef';
+is $add->template_name, $sqitch->_engine, 'Default temlate_name should be engine';
 
 MOCKCONFIG: {
     my $config_mock = Test::MockModule->new('App::Sqitch::Config');
@@ -206,18 +218,31 @@ MOCKCONFIG: {
 # Point to a valid template directory.
 ok $add = $CLASS->new(
     sqitch => $sqitch,
-    template_directory => Path::Class::dir(qw(etc templates))
+    template_directory => Path::Class::dir(qw(etc templates)),
 ), 'Create add with template_directory';
 
 for my $script (qw(deploy revert verify)) {
     my $tmpl = "$script\_template";
-    is $add->$tmpl, Path::Class::file('etc', 'templates', "$script.tmpl"),
-        "Should find $script in templates directory";
+    is $add->$tmpl, Path::Class::file('etc', 'templates', $script, 'pg.tmpl'),
+        "Should find pg $script in templates directory";
+}
+
+# Make sure it works if we override the template name.
+ok $add = $CLASS->new(
+    sqitch => $sqitch,
+    template_directory => Path::Class::dir(qw(etc templates)),
+    template_name      => 'sqlite',
+), 'Create add with template_directory and name';
+
+for my $script (qw(deploy revert verify)) {
+    my $tmpl = "$script\_template";
+    is $add->$tmpl, Path::Class::file('etc', 'templates', $script, 'sqlite.tmpl'),
+        "Should find sqlite $script in templates directory";
 }
 
 ##############################################################################
 # Test find().
-is $add->_find('deploy'), Path::Class::file(qw(etc templates deploy.tmpl)),
+is $add->_find('deploy'), Path::Class::file(qw(etc templates deploy sqlite.tmpl)),
     '_find should work with template_directory';
 
 ok $add = $CLASS->new(sqitch => $sqitch),
@@ -227,7 +252,7 @@ MOCKCONFIG: {
     my $config_mock = Test::MockModule->new('App::Sqitch::Config');
     $config_mock->mock(system_dir => Path::Class::dir('nonexistent'));
     $config_mock->mock(user_dir => Path::Class::dir('etc'));
-    is $add->_find('deploy'), Path::Class::file(qw(etc templates deploy.tmpl)),
+    is $add->_find('deploy'), Path::Class::file(qw(etc templates deploy pg.tmpl)),
         '_find should work with user_dir from Config';
 
     $config_mock->mock(user_dir => Path::Class::dir('nonexistent'));
@@ -240,30 +265,34 @@ MOCKCONFIG: {
     ), "Should get unfound verify template note";
 
     $config_mock->mock(system_dir => Path::Class::dir('etc'));
-    is $add->_find('deploy'), Path::Class::file(qw(etc templates deploy.tmpl)),
+    is $add->_find('deploy'), Path::Class::file(qw(etc templates deploy pg.tmpl)),
         '_find should work with system_dir from Config';
 }
 
 ##############################################################################
 # Test _slurp().
-my $tmpl = Path::Class::file(qw(etc templates deploy.tmpl));
+my $tmpl = Path::Class::file(qw(etc templates deploy pg.tmpl));
 is $ { $add->_slurp($tmpl)}, contents_of $tmpl,
     '_slurp() should load a reference to file contents';
 
 ##############################################################################
 # Test _add().
-make_path 'sql';
-my $fn = $sqitch->plan_file;
-open my $fh, '>', $fn or die "Cannot open $fn: $!";
-say $fh "%project=add\n\n";
-close $fh or die "Error closing $fn: $!";
-END { remove_tree 'sql' };
-my $out = file 'sql', 'sqitch_change_test.sql';
-file_not_exists_ok $out;
-ok $add->_add('sqitch_change_test', $out, $tmpl),
-    'Write out a script';
-file_exists_ok $out;
-file_contents_is $out, <<EOF, 'The template should have been evaluated';
+
+my $test_add = sub {
+    my $engine = shift;
+    make_path 'test-add';
+    my $fn = $sqitch->plan_file;
+    open my $fh, '>', $fn or die "Cannot open $fn: $!";
+    say $fh "%project=add\n\n";
+    close $fh or die "Error closing $fn: $!";
+    END { remove_tree 'test-add' };
+    my $out = file 'test-add', 'sqitch_change_test.sql';
+    file_not_exists_ok $out;
+    ok my $add = $CLASS->new(sqitch => $sqitch), 'Create add command';
+    ok $add->_add('sqitch_change_test', $out, $tmpl),
+        'Write out a script';
+    file_exists_ok $out;
+    file_contents_is $out, <<EOF, 'The template should have been evaluated';
 -- Deploy sqitch_change_test
 
 BEGIN;
@@ -272,22 +301,23 @@ BEGIN;
 
 COMMIT;
 EOF
-is_deeply +MockOutput->get_info, [[__x 'Created {file}', file => $out ]],
-    'Info should show $out created';
+    is_deeply +MockOutput->get_info, [[__x 'Created {file}', file => $out ]],
+        'Info should show $out created';
+    unlink $out;
 
-# Try with requires and conflicts.
-ok $add =  $CLASS->new(
-    sqitch    => $sqitch,
-    requires  => [qw(foo bar)],
-    conflicts => ['baz'],
-), 'Create add cmd with requires and conflicts';
+    # Try with requires and conflicts.
+    ok $add =  $CLASS->new(
+        sqitch    => $sqitch,
+        requires  => [qw(foo bar)],
+        conflicts => ['baz'],
+    ), 'Create add cmd with requires and conflicts';
 
-$out = file 'sql', 'another_change_test.sql';
-ok $add->_add('another_change_test', $out, $tmpl),
-    'Write out a script with requires and conflicts';
-is_deeply +MockOutput->get_info, [[__x 'Created {file}', file => $out ]],
-    'Info should show $out created';
-file_contents_is $out, <<EOF, 'The template should have been evaluated with requires and conflicts';
+    $out = file 'test-add', 'another_change_test.sql';
+    ok $add->_add('another_change_test', $out, $tmpl),
+        'Write out a script with requires and conflicts';
+    is_deeply +MockOutput->get_info, [[__x 'Created {file}', file => $out ]],
+        'Info should show $out created';
+    file_contents_is $out, <<EOF, 'The template should have been evaluated with requires and conflicts';
 -- Deploy another_change_test
 -- requires: foo
 -- requires: bar
@@ -299,7 +329,29 @@ BEGIN;
 
 COMMIT;
 EOF
-unlink $out;
+    unlink $out;
+};
+
+# First, test  with Template::Tiny.
+unshift @INC => sub {
+    my ($self, $file) = @_;
+    return if $file ne 'Template.pm';
+    my $i = 0;
+    return sub {
+        $_ = 'die "NO ONE HERE";';
+        return $i = !$i;
+    }, 1;
+};
+
+$test_add->('Template::Tiny');
+
+# Test _add() with Template.
+shift @INC;
+delete $INC{'Template.pm'};
+SKIP: {
+    skip 'Template Toolkit not installed', 10 unless eval 'use Template; 1';
+    $test_add->('Template Toolkit');
+}
 
 ##############################################################################
 # Test execute.
@@ -316,13 +368,13 @@ $change_mocker->mock(request_note => sub {
     %request_params = @_;
 });
 
-my $deploy_file = file qw(sql deploy widgets_table.sql);
-my $revert_file = file qw(sql revert widgets_table.sql);
-my $verify_file = file qw(sql verify   widgets_table.sql);
+my $deploy_file = file qw(test-add deploy widgets_table.sql);
+my $revert_file = file qw(test-add revert widgets_table.sql);
+my $verify_file = file qw(test-add verify   widgets_table.sql);
 
 my $plan = $sqitch->plan;
 is $plan->get('widgets_table'), undef, 'Should not have "widgets_table" in plan';
-dir_not_exists_ok +File::Spec->catdir('sql', $_) for qw(deploy revert verify);
+dir_not_exists_ok +File::Spec->catdir('test-add', $_) for qw(deploy revert verify);
 ok $add->execute('widgets_table'), 'Add change "widgets_table"';
 isa_ok my $change = $plan->get('widgets_table'), 'App::Sqitch::Plan::Change',
     'Added change';
@@ -335,11 +387,11 @@ is_deeply \%request_params, {
 }, 'It should have prompted for a note';
 
 file_exists_ok $_ for ($deploy_file, $revert_file, $verify_file);
-file_contents_like +File::Spec->catfile(qw(sql deploy widgets_table.sql)),
+file_contents_like +File::Spec->catfile(qw(test-add deploy widgets_table.sql)),
     qr/^-- Deploy widgets_table/, 'Deploy script should look right';
-file_contents_like +File::Spec->catfile(qw(sql revert widgets_table.sql)),
+file_contents_like +File::Spec->catfile(qw(test-add revert widgets_table.sql)),
     qr/^-- Revert widgets_table/, 'Revert script should look right';
-file_contents_like +File::Spec->catfile(qw(sql verify widgets_table.sql)),
+file_contents_like +File::Spec->catfile(qw(test-add verify widgets_table.sql)),
     qr/^-- Verify widgets_table/, 'Verify script should look right';
 is_deeply +MockOutput->get_info, [
     [__x 'Created {file}', file => $deploy_file],
@@ -366,9 +418,9 @@ ok $add = $CLASS->new(
     template_directory => Path::Class::dir(qw(etc templates))
 ), 'Create another add with template_directory and no verify script';
 
-$deploy_file = file qw(sql deploy foo_table.sql);
-$revert_file = file qw(sql revert foo_table.sql);
-$verify_file = file qw(sql ferify foo_table.sql);
+$deploy_file = file qw(test-add deploy foo_table.sql);
+$revert_file = file qw(test-add revert foo_table.sql);
+$verify_file = file qw(test-add ferify foo_table.sql);
 $deploy_file->touch;
 
 file_exists_ok $deploy_file;
@@ -397,3 +449,35 @@ is_deeply +MockOutput->get_info, [
         file   => $sqitch->plan_file,
     ],
 ], 'Info should report skipping file and include dependencies';
+
+##############################################################################
+# Test options parsing.
+can_ok $CLASS, 'options', '_parse_opts';
+ok $add = $CLASS->new({ sqitch => $sqitch }), "Create a $CLASS object again";
+is_deeply $add->_parse_opts, {}, 'Base _parse_opts should return an empty hash';
+
+is_deeply $add->_parse_opts([1]), {}, '_parse_opts() hould use options spec';
+my $args = [qw(
+    --note foo
+    --template bar
+    whatever
+)];
+is_deeply $add->_parse_opts($args), {
+    note          => ['foo'],
+    template_name => 'bar',
+}, '_parse_opts() should parse options spec';
+is_deeply $args, ['whatever'], 'Args array should be cleared of options';
+
+# Make sure --set works.
+push @{ $args }, '--set' => 'schema=foo', '--set' => 'table=bar';
+is_deeply $add->_parse_opts($args), {
+    set => { schema => 'foo', table => 'bar' },
+}, '_parse_opts() should parse --set options';
+is_deeply $args, ['whatever'], 'Args array should be cleared of options';
+
+# make sure --set works with repeating keys.
+push @{ $args }, '--set' => 'column=id', '--set' => 'column=name';
+is_deeply $add->_parse_opts($args), {
+    set => { column => [qw(id name)] },
+}, '_parse_opts() should parse --set options with repeting key';
+is_deeply $args, ['whatever'], 'Args array should be cleared of options';
