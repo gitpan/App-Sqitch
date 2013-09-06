@@ -16,7 +16,7 @@ extends 'App::Sqitch::Engine';
 sub dbh; # required by DBIEngine;
 with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.980';
+our $VERSION = '0.981';
 
 has client => (
     is       => 'ro',
@@ -122,6 +122,17 @@ has sqlite3 => (
     auto_deref => 1,
     default    => sub {
         my $self = shift;
+
+        # Make sure we can use this version of SQLite.
+        my @v = split /[.]/ => (
+            split / / => $self->sqitch->probe( $self->client, '-version' )
+        )[0];
+        hurl sqlite => __x(
+            'Sqitch requires SQLite 3.3.9 or later; {client} is {version}',
+            client  => $self->client,
+            version => join( '.', @v)
+        ) unless $v[0] > 3 || ($v[0] == 3 && ($v[1] > 3 || ($v[1] == 3 && $v[2] >= 9)));
+
         return [
             $self->client,
             '-noheader',

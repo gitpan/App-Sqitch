@@ -17,7 +17,7 @@ extends 'App::Sqitch::Engine';
 sub dbh; # required by DBIEngine;
 with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.980';
+our $VERSION = '0.981';
 
 has client => (
     is       => 'ro',
@@ -115,6 +115,13 @@ has dbh => (
             'No database specified; use --db-name or set "core.mysql.db_name" via sqitch config'
         ));
 
+        $dsn .= join '' => map {
+            ";$_->[0]=$_->[1]"
+        } grep { $_->[1] } (
+            [ host => $self->host ],
+            [ port => $self->port ],
+        );
+
         my $dbh = DBI->connect($dsn, $self->username, $self->password, {
             PrintError           => 0,
             RaiseError           => 0,
@@ -174,12 +181,16 @@ has mysql => (
         my @ret  = ( $self->client );
         for my $spec (
             [ user     => $self->username ],
-            [ password => $self->password ],
             [ database => $self->db_name  ],
             [ host     => $self->host     ],
             [ port     => $self->port     ],
         ) {
             push @ret, "--$spec->[0]" => $spec->[1] if $spec->[1];
+        }
+
+        # Special-case --password, which requires = before the value. O_o
+        if (my $pw = $self->password) {
+            push @ret, "--password=$pw";
         }
 
         # if (my %vars = $self->variables) {

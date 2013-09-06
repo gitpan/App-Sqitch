@@ -36,11 +36,16 @@ is $sqlite->client, 'sqlite3' . ($^O eq 'MSWin32' ? '.exe' : ''),
     'client should default to sqlite3';
 is $sqlite->db_name, file('foo.db'), 'db_name should be required';
 is $sqlite->destination, $sqlite->db_name->stringify,
-    'Destination should be db_name strintified';
+    'Destination should be db_name stringified';
 is $sqlite->sqitch_db, file('foo')->dir->file('sqitch.db'),
     'sqitch_db should default to "$db_name-sqitch.db" in the same diretory as db_name';
 is $sqlite->meta_destination, $sqlite->sqitch_db->stringify,
-    'Meta destination should be sqitch_db strintified';
+    'Meta destination should be sqitch_db stringified';
+
+# Pretend for now that we always have a valid SQLite.
+my $mock_sqitch = Test::MockModule->new(ref $sqitch);
+my $sqlite_version = '3.7.12 2012-04-03 19:43:07 86b8481be7e76cccc92d14ce762d21bfb69504af';
+$mock_sqitch->mock(probe => sub { $sqlite_version });
 
 my @std_opts = (
     '-noheader',
@@ -106,11 +111,12 @@ is $sqlite->client, '/path/to/sqlite3',
 is $sqlite->db_name, file('/path/to/sqlite.db'),
     'db_name should fall back on config';
 is $sqlite->destination, $sqlite->db_name->stringify,
-    'Destination should be configured db_name strintified';
+    'Destination should be configured db_name stringified';
 is $sqlite->sqitch_db, file('meta.db'),
     'sqitch_db should fall back on config';
 is $sqlite->meta_destination, $sqlite->sqitch_db->stringify,
-    'Meta destination should be configured sqitch_db strintified';
+    'Meta destination should be configured sqitch_db stringified';
+
 is_deeply [$sqlite->sqlite3], [$sqlite->client, @std_opts, $sqlite->db_name],
     'sqlite3 command should have config values';
 
@@ -122,19 +128,18 @@ ok $sqlite = $CLASS->new(sqitch => $sqitch),
 is $sqlite->client, 'foo/bar', 'The client should be grabbed from sqitch';
 is $sqlite->db_name, file('my.db'), 'The db_name should be grabbed from sqitch';
 is $sqlite->destination, $sqlite->db_name->stringify,
-    'Destination should be optioned db_name strintified';
+    'Destination should be optioned db_name stringified';
 is_deeply [$sqlite->sqlite3], [$sqlite->client, @std_opts, $sqlite->db_name],
     'sqlite3 command should have option values';
 
 ##############################################################################
 # Test _run(), _capture(), and _spool().
 my $db_name = $tmp_dir->file('sqitch.db');
+$sqitch = App::Sqitch->new;
 ok $sqlite = $CLASS->new(sqitch => $sqitch, db_name => $db_name),
     'Instantiate with a temporary database file';
-
 can_ok $sqlite, qw(_run _capture _spool);
 
-my $mock_sqitch = Test::MockModule->new('App::Sqitch');
 my (@run, @capture, @spool);
 $mock_sqitch->mock(run     => sub { shift; @run = @_ });
 $mock_sqitch->mock(capture => sub { shift; @capture = @_ });
@@ -178,9 +183,6 @@ SKIP: {
         'Verifile file should be passed to run() for high verbosity';
 }
 
-$mock_sqitch->unmock_all;
-$mock_config->unmock_all;
-
 ##############################################################################
 # Test DateTime formatting stuff.
 can_ok $CLASS, '_ts2char_format';
@@ -201,6 +203,48 @@ is $dt->second,  1, 'DateTime second should be set';
 is $dt->time_zone->name, 'UTC', 'DateTime TZ should be set';
 
 ##############################################################################
+# Test checking the SQLite version.
+for my $v (qw(
+    3.3.9
+    3.3.10
+    3.3.200
+    3.4.0
+    3.4.8
+    3.7.11
+    3.8.12
+    3.10.0
+    4.1.30
+)) {
+    $sqlite_version = "$v 2012-04-03 19:43:07 86b8481be7e76cccc92d14ce762d21bfb69504af";
+    ok my $sqlite = $CLASS->new(sqitch => $sqitch), "Create command for v$v";
+    ok $sqlite->sqlite3, "Should be okay with sqlite v$v";
+}
+
+for my $v (qw(
+    3.3.8
+    3.3.0
+    3.2.8
+    3.0.1
+    3.0.0
+    2.8.1
+    2.20.0
+    1.0.0
+)) {
+    $sqlite_version = "$v 2012-04-03 19:43:07 86b8481be7e76cccc92d14ce762d21bfb69504af";
+    ok my $sqlite = $CLASS->new(sqitch => $sqitch), "Create command for v$v";
+    throws_ok { $sqlite->sqlite3 } 'App::Sqitch::X', "Should not be okay with v$v";
+    is $@->ident, 'sqlite', qq{Should get ident "sqlite" for v$v};
+    is $@->message,  __x(
+        'Sqitch requires SQLite 3.3.9 or later; {client} is {version}',
+        client  => $sqlite->client,
+        version => $v
+    ), "Should get proper error message for v$v";
+}
+
+$mock_sqitch->unmock_all;
+$mock_config->unmock_all;
+
+##############################################################################
 # Can we do live tests?
 my $alt_db = $db_name->dir->file('sqitchtest.db');
 DBIEngineTest->run(
@@ -215,7 +259,7 @@ DBIEngineTest->run(
         my $self = shift;
 
         # Should have the database handle and client.
-        $self->dbh && $self->sqitch->probe( $self->client, '-version' );
+        $self->dbh && $self->sqlite3;
 
         # Make sure we have a supported version.
         my $version = $self->dbh->{sqlite_version};
