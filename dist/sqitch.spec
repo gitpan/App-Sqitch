@@ -1,5 +1,5 @@
 Name:           sqitch
-Version:        0.981
+Version:        0.982
 Release:        1%{?dist}
 Summary:        Sane database change management
 License:        MIT
@@ -10,6 +10,7 @@ BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildArch:      noarch
 BuildRequires:  perl >= 1:v5.10.0
 BuildRequires:  perl(Capture::Tiny) >= 0.12
+BuildRequires:  perl(Clone)
 BuildRequires:  perl(Config)
 BuildRequires:  perl(Config::GitLike) >= 1.09
 BuildRequires:  perl(constant)
@@ -73,6 +74,7 @@ BuildRequires:  perl(URI)
 BuildRequires:  perl(User::pwent)
 BuildRequires:  perl(utf8)
 BuildRequires:  perl(warnings)
+Requires:       perl(Clone)
 Requires:       perl(Config)
 Requires:       perl(Config::GitLike) >= 1.09
 Requires:       perl(constant)
@@ -228,6 +230,9 @@ package bundles the Sqitch MySQL support.
 # No additional files required.
 
 %changelog
+* Wed Sep 11 2013 David E. Wheeler <david.wheeler@iovation.com> 0.982-1
+- Upgrade to v0.982.
+
 * Thu Sep 5 2013 David E. Wheeler <david.wheeler@iovation.com> 0.981-1
 - Upgrade to v0.981.
 

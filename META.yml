@@ -17,6 +17,7 @@ build_requires:
   Test::NoWarnings: 0.083
   Time::HiRes: 0
   lib: 0
+  perl: v5.10.0
 configure_requires:
   Module::Build: 0.35
 dynamic_config: 0
@@ -32,6 +33,7 @@ no_index:
 recommends:
   Pod::Simple: 1.41
 requires:
+  Clone: 0
   Config::GitLike: 1.09
   DBI: 0
   DateTime: 0
@@ -92,4 +94,4 @@ resources:
   bugtracker: http://github.com/theory/sqitch/issues/
   homepage: http://sqitch.org/
   repository: http://github.com/theory/sqitch/
-version: 0.981
+version: 0.982

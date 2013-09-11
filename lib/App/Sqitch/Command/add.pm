@@ -11,11 +11,12 @@ use MouseX::Types::Path::Class;
 use Path::Class;
 use Try::Tiny;
 use File::Path qw(make_path);
+use Clone qw(clone);
 use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.981';
+our $VERSION = '0.982';
 
 has requires => (
     is       => 'ro',
@@ -272,7 +273,7 @@ sub _add {
         hurl add => $msg;
     }
 
-    my $vars = {
+    my $vars = clone {
         %{ $self->variables },
         change    => $name,
         requires  => $self->requires,
@@ -286,7 +287,12 @@ sub _add {
     );
 
     if (eval 'use Template; 1') {
-        Template->new->process( $self->_slurp($tmpl), $vars, $fh );
+        my $tt = Template->new;
+        $tt->process( $self->_slurp($tmpl), $vars, $fh ) or hurl add => __x(
+            'Error executing {template}: {error}',
+            template => $tmpl,
+            error    => $tt->error,
+        );
     } else {
         eval 'use Template::Tiny 0.11; 1' or die $@;
         my $output = '';

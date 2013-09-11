@@ -17,7 +17,7 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.981",
+  "dist_version" => "0.982",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {
@@ -25,6 +25,7 @@ my %module_build_args = (
   },
   "recursive_test_files" => 1,
   "requires" => {
+    "Clone" => 0,
     "Config::GitLike" => "1.09",
     "DBI" => 0,
     "DateTime" => 0,
@@ -98,7 +99,8 @@ my %module_build_args = (
     "Test::More" => "0.94",
     "Test::NoWarnings" => "0.083",
     "Time::HiRes" => 0,
-    "lib" => 0
+    "lib" => 0,
+    "perl" => "v5.10.0"
   }
 );
 
