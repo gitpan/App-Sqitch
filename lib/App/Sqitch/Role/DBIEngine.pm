@@ -11,7 +11,7 @@ use App::Sqitch::X qw(hurl);
 use Locale::TextDomain qw(App-Sqitch);
 use namespace::autoclean;
 
-our $VERSION = '0.982';
+our $VERSION = '0.983';
 
 requires 'dbh';
 requires 'sqitch';
@@ -66,7 +66,7 @@ sub _cid {
             OFFSET COALESCE(?, 0)
         }, undef, $project || $self->plan->project, $offset)->[0];
     } catch {
-        return if $self->_no_table_error;
+        return if $self->_no_table_error && !$self->initialized;
         die $_;
     };
 }

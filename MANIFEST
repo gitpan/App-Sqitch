@@ -163,6 +163,7 @@ t/pragma.t
 t/read.pl
 t/rebase.t
 t/revert.t
+t/rework.conf
 t/rework.t
 t/show.t
 t/sqitch

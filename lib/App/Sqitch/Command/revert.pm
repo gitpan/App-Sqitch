@@ -10,7 +10,7 @@ use List::Util qw(first);
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.982';
+our $VERSION = '0.983';
 
 has to_target => (
     is  => 'ro',
@@ -81,8 +81,9 @@ sub execute {
     my $self   = shift;
     my $engine = $self->sqitch->engine;
     $engine->no_prompt( $self->no_prompt );
+    $engine->log_only( $self->log_only );
     if (my %v = %{ $self->variables }) { $engine->set_variables(%v) }
-    $engine->revert( $self->to_target // shift, $self->log_only );
+    $engine->revert( $self->to_target // shift );
     return $self;
 }
 

@@ -46,6 +46,8 @@ A brief note describing the purpose of the change. The note will be attached
 to the change as a comment. Multiple invocations will be concatenated together
 as separate paragraphs.
 
+For you Git folks out there, C<-m> also works.
+
 =item C<-s>
 
 =item C<--set>
@@ -106,6 +108,21 @@ Do not generate the named script.
 =item C<--verify>
 
 Generate the named script. These are not mutually exclusive.
+
+=item C<-e>
+
+=item C<--edit>
+
+=item C<--open-editor>
+
+Open the generated change scripts in an editor.
+
+=item C<--no-edit>
+
+=item C<--no-open-editor>
+
+Do not open the change scripts in an editor. Useful when L<C<add.open_editor>>
+is true.
 
 =back
 
@@ -196,12 +213,12 @@ The name of the change being added.
 =item C<requires>
 
 A list of required changes as passed via one or more instances of the
-C<--requiers> option.
+C<--requires> option.
 
 =item C<conflicts>
 
 A list of conflicting changes as passed via one or more instances of the
-C<--requiers> option.
+C<--conflicts> option.
 
 =back
 
@@ -242,6 +259,11 @@ C<--deploy-template>, C<--revert-template>, or C<--verify-template>.
 A section defining template variables. Useful if you've customized templates
 with your own variables and want project-, user-, or system-specific defaults
 for them.
+
+=item C<add.open_editor>
+
+Boolean indicating if the add command should spawn an editor after generating
+change scripts.  When true, equivalent to passing C<--edit>.  Defaults off.
 
 =back
 

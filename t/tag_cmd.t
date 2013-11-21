@@ -12,6 +12,10 @@ use File::Path qw(make_path remove_tree);
 use lib 't/lib';
 use MockOutput;
 
+$ENV{SQITCH_CONFIG}        = 'nonexistent.conf';
+$ENV{SQITCH_USER_CONFIG}   = 'nonexistent.user';
+$ENV{SQITCH_SYSTEM_CONFIG} = 'nonexistent.sys';
+
 my $CLASS = 'App::Sqitch::Command::tag';
 
 ok my $sqitch = App::Sqitch->new(
@@ -32,7 +36,7 @@ can_ok $CLASS, qw(
 );
 
 is_deeply [$CLASS->options], [qw(
-    note|n=s@
+    note|n|m=s@
 )], 'Should have note option';
 
 make_path 'test-tag_cmd';

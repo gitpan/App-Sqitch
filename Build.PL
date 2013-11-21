@@ -17,7 +17,7 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.982",
+  "dist_version" => "0.983",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {
@@ -99,23 +99,32 @@ my %module_build_args = (
     "Test::More" => "0.94",
     "Test::NoWarnings" => "0.083",
     "Time::HiRes" => 0,
-    "lib" => 0,
-    "perl" => "v5.10.0"
+    "lib" => 0
   }
 );
 
 
+my %fallback_build_requires = (
+  "Capture::Tiny" => "0.12",
+  "File::Spec" => 0,
+  "FindBin" => 0,
+  "Module::Build" => "0.35",
+  "Test::Deep" => 0,
+  "Test::Dir" => 0,
+  "Test::Exception" => 0,
+  "Test::File" => 0,
+  "Test::File::Contents" => "0.20",
+  "Test::MockModule" => "0.05",
+  "Test::More" => "0.94",
+  "Test::NoWarnings" => "0.083",
+  "Time::HiRes" => 0,
+  "lib" => 0
+);
+
+
 unless ( eval { Module::Build->VERSION(0.4004) } ) {
-  my $tr = delete $module_build_args{test_requires};
-  my $br = $module_build_args{build_requires};
-  for my $mod ( keys %$tr ) {
-    if ( exists $br->{$mod} ) {
-      $br->{$mod} = $tr->{$mod} if $tr->{$mod} > $br->{$mod};
-    }
-    else {
-      $br->{$mod} = $tr->{$mod};
-    }
-  }
+  delete $module_build_args{test_requires};
+  $module_build_args{build_requires} = \%fallback_build_requires;
 }
 
 my $build = Module::Build::Sqitch->new(%module_build_args);

@@ -1,4 +1,4 @@
-App/Sqitch version 0.982
+App/Sqitch version 0.983
 ========================
 
 [Sqitch](http://sqitch.org/) is a database change management application. It
@@ -47,7 +47,7 @@ things:
 *   Reduced Duplication
 
     If you're using a VCS to track your changes, you don't have to duplicate
-    xentire change scripts for simple changes. As long as the changes are
+    entire change scripts for simple changes. As long as the changes are
     [idempotent](http://en.wikipedia.org/wiki/Idempotence), you can change
     your code directly, and Sqitch will know it needs to be updated.
 
