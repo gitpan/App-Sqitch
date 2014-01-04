@@ -23,7 +23,7 @@ use Mouse::Util::TypeConstraints;
 use MouseX::Types::Path::Class 0.06;
 use namespace::autoclean 0.11;
 
-our $VERSION = '0.983';
+our $VERSION = '0.990';
 
 BEGIN {
     # Need to create types before loading other Sqitch classes.
@@ -41,7 +41,7 @@ BEGIN {
     subtype 'CoreEngine', as 'Str', where {
         my $e = $_;
         hurl core => __x('Unknown engine: {engine}', engine => $_)
-            unless first { $e eq $_ } qw(pg sqlite mysql oracle);
+            unless first { $e eq $_ } qw(pg sqlite mysql oracle firebird);
         1;
     };
 
@@ -97,19 +97,49 @@ has _engine => (
     }
 );
 
-has engine => (
-    is      => 'ro',
-    isa     => 'App::Sqitch::Engine',
-    lazy    => 1,
-    default => sub {
-        my $self = shift;
-        require App::Sqitch::Engine;
-        App::Sqitch::Engine->load({
-            sqitch => $self,
-            engine => $self->_engine,
-        });
-    }
-);
+sub engine {
+    my $self = shift;
+    require App::Sqitch::Engine;
+    App::Sqitch::Engine->load({
+        sqitch => $self,
+        engine => $self->_engine,
+        ref $_[0] ? %{ $_[0] } : @_
+    });
+}
+
+sub config_for_target {
+    my ($self, $target) = @_;
+    return unless $target;
+    require URI::db;
+    return {
+        target => $target,
+        uri    => URI::db->new($target)
+    } if $target =~ /:/;
+    my $config = $self->config->get_section( section => "target.$target" )
+        or return;
+    $config->{target} = $target;
+    $config->{uri} = URI::db->new( $config->{uri} ) if $config->{uri};
+    return $config;
+}
+
+sub config_for_target_strict {
+    my ($self, $target) = @_;
+    my $config = shift->config_for_target($target) or hurl core => __x(
+        'Cannot find target "{target}"',
+        target => $target
+    );
+    hurl core => __x(
+        'No URI associated with target "{target}"',
+        target => $target
+    ) unless $config->{uri};
+    return $config;
+}
+
+sub engine_for_target {
+    my ($self, $target) = @_;
+    return $self->engine unless $target;
+    return $self->engine( $self->config_for_target_strict($target) );
+}
 
 # Attributes useful to engines; no defaults.
 has db_client   => ( is => 'ro', isa => 'Str' );
@@ -287,7 +317,11 @@ has pager => (
         } unless IO::Pager->can('say');
 
         my $fh = IO::Pager->new(\*STDOUT);
-        $fh->binmode(':utf8_strict') if eval { $fh->isa('IO::Pager') };
+        if (eval { $fh->isa('IO::Pager') }) {
+            $fh->binmode(':utf8_strict');
+        } else {
+            binmode $fh, ':utf8_strict';
+        }
         $fh;
     },
 );
@@ -327,12 +361,18 @@ sub go {
         # Just bail for unknown exceptions.
         $sqitch->vent($_) && return 2 unless eval { $_->isa('App::Sqitch::X') };
 
-        # It's one of ours. Vent.
-        $sqitch->vent($_->message);
+        # It's one of ours.
+        if ($_->exitval == 1) {
+            # Non-fatal exception; just send the message to info.
+            $sqitch->info($_->message);
+        } else {
+            # Fatal exception; vent.
+            $sqitch->vent($_->message);
 
-        # Emit the stack trace. DEV errors should be vented; otherwise trace.
-        my $meth = $_->ident eq 'DEV' ? 'vent' : 'trace';
-        $sqitch->$meth($_->stack_trace->as_string);
+            # Emit the stack trace. DEV errors should be vented; otherwise trace.
+            my $meth = $_->ident eq 'DEV' ? 'vent' : 'trace';
+            $sqitch->$meth($_->stack_trace->as_string);
+        }
 
         # Bail.
         return $_->exitval;
@@ -743,8 +783,6 @@ Constructs and returns a new Sqitch object. The supported parameters include:
 
 =item C<plan_file>
 
-=item C<engine>
-
 =item C<db_client>
 
 =item C<db_name>
@@ -778,8 +816,6 @@ Constructs and returns a new Sqitch object. The supported parameters include:
 =head2 Accessors
 
 =head3 C<plan_file>
-
-=head3 C<engine>
 
 =head3 C<db_client>
 
@@ -825,6 +861,59 @@ configuration files.
 Runs a system command and waits for it to finish. Throws an exception on
 error. Does not use the shell, so arguments must be passed as a list. Use
 C<shell> to run a command and its arguments as a single string.
+
+=head3 C<engine>
+
+  my $engine = $sqitch->engine(@params);
+
+Creates and returns an engine of the appropriate subclass. Pass in additional
+parameters to be passed through to the engine constructor.
+
+=head2 C<config_for_target>
+
+  my $config = $sqitch->config_for_target($target);
+
+Returns a hash reference representing the configuration for the specified
+target name or URI. The supported keys in the hash reference are:
+
+=over
+
+=item C<target>
+
+The name of the target, as passed.
+
+=item C<uri>
+
+A L<database URI|URI::db> object, to be used to connect to the target
+database.
+
+
+=item C<registry>
+
+The name of the Sqitch registry in the target database.
+
+=back
+
+If the C<$target> argument looks like a database URI, it will simply returned
+in the hash reference. If the C<$target> argument corresponds to a target
+configuration key, the target configuration will be returned, with the C<uri>
+value a upgraded to a L<URI> object. Otherwise returns C<undef>.
+
+=head2 C<config_for_target_strict>
+
+  my $config = $sqitch->config_for_target_strict($target);
+
+Like C<config_for_target>, but throws an exception if C<$target> is not a URL,
+does not correspond to a target configuration section, or does not include a
+C<uri> key. Otherwise returns the target configuration.
+
+=head3 C<engine_for_target>
+
+  my $engine = $sqitch->engine_for($target);
+
+Like C<config_for_target_strict>, but returns an L<App::Sqitch::Engine>
+object. If C<$target> is not defined or is empty, an engine will be returned
+for the default target.
 
 =head3 C<shell>
 

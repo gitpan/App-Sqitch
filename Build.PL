@@ -17,7 +17,7 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.983",
+  "dist_version" => "0.990",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {
@@ -38,6 +38,7 @@ my %module_build_args = (
     "File::HomeDir" => 0,
     "File::Path" => 0,
     "File::Temp" => 0,
+    "File::Which" => 0,
     "Getopt::Long" => 0,
     "Hash::Merge" => 0,
     "IO::Pager" => 0,
@@ -70,15 +71,18 @@ my %module_build_args = (
     "Template::Tiny" => "0.11",
     "Term::ANSIColor" => "2.02",
     "Throwable" => 0,
+    "Time::HiRes" => 0,
+    "Time::Local" => 0,
     "Try::Tiny" => 0,
     "URI" => 0,
+    "URI::db" => 0,
     "User::pwent" => 0,
     "constant" => 0,
     "if" => 0,
     "namespace::autoclean" => "0.11",
     "overload" => 0,
     "parent" => 0,
-    "perl" => "5.010",
+    "perl" => "v5.10.0",
     "strict" => 0,
     "utf8" => 0,
     "warnings" => 0
@@ -88,7 +92,9 @@ my %module_build_args = (
   ],
   "test_requires" => {
     "Capture::Tiny" => "0.12",
+    "Carp" => 0,
     "File::Spec" => 0,
+    "File::Spec::Functions" => 0,
     "FindBin" => 0,
     "Test::Deep" => 0,
     "Test::Dir" => 0,
@@ -98,15 +104,17 @@ my %module_build_args = (
     "Test::MockModule" => "0.05",
     "Test::More" => "0.94",
     "Test::NoWarnings" => "0.083",
-    "Time::HiRes" => 0,
-    "lib" => 0
+    "lib" => 0,
+    "perl" => "v5.10.0"
   }
 );
 
 
 my %fallback_build_requires = (
   "Capture::Tiny" => "0.12",
+  "Carp" => 0,
   "File::Spec" => 0,
+  "File::Spec::Functions" => 0,
   "FindBin" => 0,
   "Module::Build" => "0.35",
   "Test::Deep" => 0,
@@ -117,8 +125,8 @@ my %fallback_build_requires = (
   "Test::MockModule" => "0.05",
   "Test::More" => "0.94",
   "Test::NoWarnings" => "0.083",
-  "Time::HiRes" => 0,
-  "lib" => 0
+  "lib" => 0,
+  "perl" => "v5.10.0"
 );
 
 

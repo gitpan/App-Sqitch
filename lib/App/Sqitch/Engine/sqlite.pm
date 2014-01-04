@@ -16,57 +16,67 @@ extends 'App::Sqitch::Engine';
 sub dbh; # required by DBIEngine;
 with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.983';
+our $VERSION = '0.990';
 
-has client => (
-    is       => 'ro',
-    isa      => 'Str',
-    lazy     => 1,
-    required => 1,
-    default  => sub {
-        my $sqitch = shift->sqitch;
-        $sqitch->db_client
-            || $sqitch->config->get( key => 'core.sqlite.client' )
-            || 'sqlite3' . ( $^O eq 'MSWin32' ? '.exe' : '' );
-    },
-);
-
-has db_name => (
-    is       => 'ro',
-    isa      => 'Maybe[Path::Class::File]',
-    lazy     => 1,
-    required => 1,
-    handles  => { destination => 'stringify' },
-    default  => sub {
-        my $self   = shift;
+sub BUILD {
+    my $self = shift;
+    my $uri  = $self->uri;
+    unless ($uri->dbname) {
         my $sqitch = $self->sqitch;
-        my $name = $sqitch->db_name
-            || $self->sqitch->config->get( key => 'core.sqlite.db_name' )
-            || try { $sqitch->plan->project . '.db' }
-            || return undef;
-        return file $name;
-    },
-);
+        # XXX Config var is for backcompat.
+        my $name =  $sqitch->config->get( key => 'core.sqlite.db_name' )
+            || try { $sqitch->plan->project . '.db' };
+        $uri->dbname($name) if $name;
+    }
+}
 
-has sqitch_db => (
+has registry_uri => (
     is       => 'ro',
-    isa      => 'Maybe[Path::Class::File]',
+    isa      => 'URI::db',
     lazy     => 1,
     required => 1,
-    handles  => { meta_destination => 'stringify' },
     default  => sub {
         my $self = shift;
+        my $uri  = $self->uri->clone;
+        my $reg  = $self->registry;
+
         if (my $db = $self->sqitch->config->get( key => 'core.sqlite.sqitch_db' ) ) {
-            return file $db;
+            # ### Deprecated Sqitch database file name.
+            $uri->dbname($db);
+        } elsif ( file($reg)->is_absolute ) {
+            # Just use an absolute path.
+            $uri->dbname($reg);
+        } elsif (my @segs = $uri->path_segments) {
+            # Use the same name, but replace $name.$ext with $reg.$ext.
+            my $reg = $self->registry;
+            if ($reg =~ /[.]/) {
+                $segs[-1] =~ s/^[^.]+(?:[.].+)?$/$reg/;
+            } else {
+                $segs[-1] =~ s/^[^.]+([.].+)?$/$reg$1/;
+            }
+            $uri->path_segments(@segs);
+        } else {
+            # No known path, so no name.
+            $uri->dbname(undef);
         }
-        if (my $db = $self->db_name) {
-            my ($suffix) = $db->basename =~ /(.[^.]+)$/;
-            $suffix //= '';
-            return $db->dir->file("sqitch$suffix");
-        }
-        return undef;
+
+        return $uri;
     },
 );
+
+sub registry_destination {
+    my $uri = shift->registry_uri;
+    if ($uri->password) {
+        $uri = $uri->clone;
+        $uri->password(undef);
+    }
+    return $uri->as_string;
+}
+
+sub key    { 'sqlite' }
+sub name   { 'SQLite' }
+sub driver { 'DBD::SQLite 1.37' }
+sub default_client { 'sqlite3' }
 
 has dbh => (
     is      => 'rw',
@@ -74,15 +84,10 @@ has dbh => (
     lazy    => 1,
     default => sub {
         my $self = shift;
-        try { require DBD::SQLite } catch {
-            hurl sqlite => __ 'DBD::SQLite module required to manage SQLite';
-        };
+        $self->use_driver;
 
-        my $dsn = 'dbi:SQLite:dbname=' . ($self->sqitch_db || hurl sqlite => __(
-            'No database specified; use --db-name or set "core.sqlite.db_name" via sqitch config'
-        ));
-
-        my $dbh = DBI->connect($dsn, '', '', {
+        my $uri = $self->registry_uri;
+        my $dbh = DBI->connect($uri->dbi_dsn, '', '', {
             PrintError        => 0,
             RaiseError        => 0,
             AutoCommit        => 1,
@@ -101,6 +106,7 @@ has dbh => (
                     return;
                 },
             },
+            $uri->query_params,
         });
 
         # Make sure we support this version.
@@ -133,23 +139,21 @@ has sqlite3 => (
             version => join( '.', @v)
         ) unless $v[0] > 3 || ($v[0] == 3 && ($v[1] > 3 || ($v[1] == 3 && $v[2] >= 9)));
 
+        my $dbname = $self->uri->dbname or hurl sqlite => __x(
+            'Database name missing in URI {uri}',
+            uri => $self->uri,
+        );
+
         return [
             $self->client,
             '-noheader',
             '-bail',
+            '-batch',
             '-csv', # or -column or -line?
-            $self->db_name
+            $dbname,
         ];
     },
 );
-
-sub config_vars {
-    return (
-        client    => 'any',
-        db_name   => 'any',
-        sqitch_db => 'any',
-    );
-}
 
 sub initialized {
     my $self = shift;
@@ -164,18 +168,18 @@ sub initialize {
     my $self   = shift;
     hurl engine => __x(
         'Sqitch database {database} already initialized',
-        database => $self->sqitch_db,
+        database => $self->registry_uri->dbname,
     ) if $self->initialized;
 
     # Load up our database.
     my @cmd = $self->sqlite3;
-    $cmd[-1] = $self->sqitch_db;
+    $cmd[-1] = $self->registry_uri->dbname;
     my $file = file(__FILE__)->dir->file('sqlite.sql');
     $self->sqitch->run( @cmd, '.read ' . $self->dbh->quote($file) );
 }
 
 sub _no_table_error  {
-    return $DBI::errstr =~ /^\Qno such table:/;
+    return $DBI::errstr && $DBI::errstr =~ /^\Qno such table:/;
 }
 
 sub _regex_op { 'REGEXP' }
@@ -254,19 +258,6 @@ App::Sqitch::Engine::sqlite provides the SQLite storage engine for Sqitch.
 
 =head1 Interface
 
-=head3 Class Methods
-
-=head3 C<config_vars>
-
-  my %vars = App::Sqitch::Engine::sqlite->config_vars;
-
-Returns a hash of names and types to use for variables in the C<core.sqlite>
-section of the a Sqitch configuration file. The variables and their types are:
-
-  client    => 'any'
-  db_name   => 'any'
-  sqitch_db => 'any'
-
 =head2 Accessors
 
 =head3 C<client>
@@ -275,17 +266,6 @@ Returns the path to the SQLite client. If C<--db-client> was passed to
 C<sqitch>, that's what will be returned. Otherwise, it uses the
 C<core.sqlite.client> configuration value, or else defaults to C<sqlite3> (or
 C<sqlite3.exe> on Windows), which should work if it's in your path.
-
-=head3 C<db_name>
-
-Returns the name of the database file. If C<--db-name> was passed to C<sqitch>
-that's what will be returned.
-
-=head3 C<sqitch_db>
-
-Name of the SQLite database file to use for the Sqitch metadata tables.
-Returns the value of the C<core.sqlite.sqitch_db> configuration value, or else
-defaults to F<sqitch.db> in the same directory as C<db_name>.
 
 =head1 Author
 

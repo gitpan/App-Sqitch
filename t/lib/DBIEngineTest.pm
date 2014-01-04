@@ -9,6 +9,9 @@ use Test::Exception;
 use Time::HiRes qw(sleep);
 use Locale::TextDomain qw(App-Sqitch);
 
+# Just die on warnings.
+use Carp; BEGIN { $SIG{__WARN__} = \&Carp::confess }
+
 sub run {
     my ( $self, %p ) = @_;
 
@@ -1592,6 +1595,9 @@ sub dt_for_event {
             )
         ) WHERE rnum = ?
     }, undef, $offset + 1)->[0]) if $dbh->{Driver}->{Name} eq 'Oracle';
+    return $dtfunc->($engine->dbh->selectcol_arrayref(
+        "SELECT FIRST 1 SKIP $offset $col FROM events ORDER BY committed_at ASC",
+    )->[0]) if $dbh->{Driver}->{Name} eq 'Firebird';
     return $dtfunc->($engine->dbh->selectcol_arrayref(
         "SELECT $col FROM events ORDER BY committed_at ASC LIMIT 1 OFFSET $offset",
     )->[0]);

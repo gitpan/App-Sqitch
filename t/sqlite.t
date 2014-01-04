@@ -25,23 +25,35 @@ BEGIN {
 }
 
 is_deeply [$CLASS->config_vars], [
-    client    => 'any',
-    db_name   => 'any',
-    sqitch_db => 'any',
+    target   => 'any',
+    registry => 'any',
+    client   => 'any',
 ], 'config_vars should return three vars';
 
-my $sqitch = App::Sqitch->new;
-isa_ok my $sqlite = $CLASS->new(sqitch => $sqitch, db_name => file 'foo.db'), $CLASS;
+my $sqitch = App::Sqitch->new( _engine => 'sqlite', db_name => 'foo.db' );
+isa_ok my $sqlite = $CLASS->new(sqitch => $sqitch), $CLASS;
 
 is $sqlite->client, 'sqlite3' . ($^O eq 'MSWin32' ? '.exe' : ''),
     'client should default to sqlite3';
-is $sqlite->db_name, file('foo.db'), 'db_name should be required';
-is $sqlite->destination, $sqlite->db_name->stringify,
-    'Destination should be db_name stringified';
-is $sqlite->sqitch_db, file('foo')->dir->file('sqitch.db'),
-    'sqitch_db should default to "$db_name-sqitch.db" in the same diretory as db_name';
-is $sqlite->meta_destination, $sqlite->sqitch_db->stringify,
-    'Meta destination should be sqitch_db stringified';
+is $sqlite->uri->dbname, file('foo.db'), 'dbname should be filled in';
+is $sqlite->target, $sqlite->uri->as_string,
+    'Target should be uri stringified';
+is $sqlite->destination, $sqlite->uri->as_string,
+    'Destination should be uri stringified';
+is $sqlite->registry_destination, $sqlite->registry_uri->as_string,
+    'Meta target should be registry_uri stringified';
+
+# Make sure the password is suppressed in the destination, should anyone be
+# silly enough to include on in an SQLite URI.
+isa_ok $sqlite = $CLASS->new(
+    sqitch => $sqitch,
+    uri => URI->new('db:sqlite://foo:bar@localhost/my.db'),
+), $CLASS;
+is $sqlite->target, $sqlite->uri->as_string, 'Target should be the URI stringified';
+like $sqlite->destination, qr{^db:sqlite://foo:?\@localhost/foo.db$},
+    'Destination should exclude password';
+like $sqlite->registry_destination, qr{^db:sqlite://foo:?\@localhost/sqitch\.db$},
+    'Registry destination should also exclude password';
 
 # Pretend for now that we always have a valid SQLite.
 my $mock_sqitch = Test::MockModule->new(ref $sqitch);
@@ -51,25 +63,30 @@ $mock_sqitch->mock(probe => sub { $sqlite_version });
 my @std_opts = (
     '-noheader',
     '-bail',
+    '-batch',
     '-csv',
 );
 
-is_deeply [$sqlite->sqlite3], [$sqlite->client, @std_opts, $sqlite->db_name],
+is_deeply [$sqlite->sqlite3], [$sqlite->client, @std_opts, $sqlite->uri->dbname],
     'sqlite3 command should have the proper opts';
 
 ##############################################################################
 # Make sure we get an error for no database name.
+throws_ok {
+    $CLASS->new(sqitch => App::Sqitch->new( _engine => 'sqlite' ))->sqlite3
+} 'App::Sqitch::X', 'Should get an error for no db name';
+is $@->ident, 'sqlite', 'Missing db name error ident should be "sqlite"';
+is $@->message,
+    __x('Database name missing in URI {uri}', uri => 'db:sqlite:'),
+    'Missing db name error message should be correct';
+
+##############################################################################
+# Make sure we get an error for no database name.
 my $tmp_dir = Path::Class::dir( tempdir CLEANUP => 1 );
-isa_ok $sqlite = $CLASS->new(sqitch => $sqitch), $CLASS;
-my $have_sqlite = try { require DBD::SQLite };
+my $have_sqlite = try { $sqlite->use_driver };
+$sqitch = App::Sqitch->new( _engine => 'sqlite' );
 if ($have_sqlite) {
     # We have DBD::SQLite.
-    throws_ok { $sqlite->dbh } 'App::Sqitch::X', 'Should get an error for no db name';
-    is $@->ident, 'sqlite', 'Missing db name error ident should be "sqlite"';
-    is $@->message,
-        __ 'No database specified; use --db-name or set "core.sqlite.db_name" via sqitch config',
-        'Missing db name error message should be correct';
-
     # Find out if it's built with SQLite >= 3.7.11.
     my $dbh = DBI->connect('DBI:SQLite:');
     my @v = split /[.]/ => $dbh->{sqlite_version};
@@ -78,7 +95,7 @@ if ($have_sqlite) {
         # We have DBD::SQLite, but it is too old. Make sure we complain about that.
         isa_ok $sqlite = $CLASS->new(
             sqitch => $sqitch,
-            sqitch_db => $tmp_dir->file('_tmp.db')
+            registry => '_tmp',
         ), $CLASS;
         throws_ok { $sqlite->dbh } 'App::Sqitch::X', 'Should get an error for old SQLite';
         is $@->ident, 'sqlite', 'Unsupported SQLite error ident should be "sqlite"';
@@ -92,16 +109,19 @@ if ($have_sqlite) {
     throws_ok { $sqlite->dbh } 'App::Sqitch::X',
         'Should get an error without DBD::SQLite';
     is $@->ident, 'sqlite', 'No DBD::SQLite error ident should be "sqlite"';
-    is $@->message, __ 'DBD::SQLite module required to manage SQLite',
-        'No DBD::SQLite error message should be correct';
+    is $@->message, __x(
+        '{driver} required to manage {engine}',
+        driver  => $sqlite->driver,
+        engine  => $sqlite->name,
+    ), 'No DBD::SQLite error message should be correct';
 }
 
 ##############################################################################
 # Make sure config settings override defaults.
 my %config = (
-    'core.sqlite.client'    => '/path/to/sqlite3',
-    'core.sqlite.db_name'   => '/path/to/sqlite.db',
-    'core.sqlite.sqitch_db' => 'meta.db',
+    'core.sqlite.client'   => '/path/to/sqlite3',
+    'core.sqlite.db_name'  => '/path/to/sqlite.db',
+    'core.sqlite.registry' => 'meta',
 );
 my $mock_config = Test::MockModule->new('App::Sqitch::Config');
 $mock_config->mock(get => sub { $config{ $_[2] } });
@@ -109,35 +129,94 @@ ok $sqlite = $CLASS->new(sqitch => $sqitch),
     'Create another sqlite';
 is $sqlite->client, '/path/to/sqlite3',
     'client should fall back on config';
-is $sqlite->db_name, file('/path/to/sqlite.db'),
-    'db_name should fall back on config';
-is $sqlite->destination, $sqlite->db_name->stringify,
-    'Destination should be configured db_name stringified';
-is $sqlite->sqitch_db, file('meta.db'),
-    'sqitch_db should fall back on config';
-is $sqlite->meta_destination, $sqlite->sqitch_db->stringify,
-    'Meta destination should be configured sqitch_db stringified';
+is $sqlite->uri->as_string, 'db:sqlite:/path/to/sqlite.db',
+    'dbname should fall back on config';
+is $sqlite->target, $sqlite->uri->as_string,
+    'Target should be configured uri stringified';
+is $sqlite->destination, $sqlite->uri->as_string,
+    'Destination should be configured uri stringified';
+is $sqlite->registry_uri->as_string, 'db:sqlite:/path/to/meta.db',
+    'registry_uri should fall back on config';
+is $sqlite->registry_destination, $sqlite->registry_uri->as_string,
+    'Meta target should be configured registry_uri stringified';
 
-is_deeply [$sqlite->sqlite3], [$sqlite->client, @std_opts, $sqlite->db_name],
-    'sqlite3 command should have config values';
+# Try a registry with an extension and a dbname without.
+%config = (
+    'core.sqlite.db_name'  => '/path/to/sqitch',
+    'core.sqlite.registry' => 'meta.db',
+);
+ok $sqlite = $CLASS->new(sqitch => $sqitch),
+    'Create another sqlite';
+is $sqlite->uri->as_string, 'db:sqlite:/path/to/sqitch',
+    'dbname should fall back on config with no extension';
+is $sqlite->target, $sqlite->uri->as_string,
+    'Target should be configured uri stringified';
+is $sqlite->destination, $sqlite->uri->as_string,
+    'Destination should be configured uri stringified';
+is $sqlite->registry_uri->as_string, 'db:sqlite:/path/to/meta.db',
+    'registry_uri should fall back on config wth extension';
+is $sqlite->registry_destination, $sqlite->registry_uri->as_string,
+    'Meta target should be configured registry_uri stringified';
+
+# Also try a registry with no extension and a dbname with.
+%config = (
+    'core.sqlite.db_name'  => '/path/to/sqitch.db',
+    'core.sqlite.registry' => 'registry',
+);
+ok $sqlite = $CLASS->new(sqitch => $sqitch),
+    'Create another sqlite';
+is $sqlite->uri->as_string, 'db:sqlite:/path/to/sqitch.db',
+    'dbname should fall back on config with no extension';
+is $sqlite->target, $sqlite->uri->as_string,
+    'Target should be configured uri stringified';
+is $sqlite->destination, $sqlite->uri->as_string,
+    'Destination should be configured uri stringified';
+is $sqlite->registry_uri->as_string, 'db:sqlite:/path/to/registry.db',
+    'registry_uri should fall back on config wth extension';
+is $sqlite->registry_destination, $sqlite->registry_uri->as_string,
+    'Meta target should be configured registry_uri stringified';
+
+# Try a registry with an absolute path.
+%config = (
+    'core.sqlite.db_name'  => '/path/to/sqitch.db',
+    'core.sqlite.registry' => '/some/other/path.db',
+);
+ok $sqlite = $CLASS->new(sqitch => $sqitch),
+    'Create another sqlite';
+is $sqlite->uri->as_string, 'db:sqlite:/path/to/sqitch.db',
+    'dbname should fall back on config with no extension';
+is $sqlite->target, $sqlite->uri->as_string,
+    'Target should be configured uri stringified';
+is $sqlite->destination, $sqlite->uri->as_string,
+    'Destination should be configured uri stringified';
+is $sqlite->registry_uri->as_string, 'db:sqlite:/some/other/path.db',
+    'registry_uri should fall back on config wth extension';
+is $sqlite->registry_destination, $sqlite->registry_uri->as_string,
+    'Meta target should be configured registry_uri stringified';
 
 ##############################################################################
 # Now make sure that Sqitch options override configurations.
-$sqitch = App::Sqitch->new(db_client => 'foo/bar', db_name => 'my.db');
+$sqitch = App::Sqitch->new(_engine => 'sqlite', db_client => 'foo/bar', db_name => 'my.db');
 ok $sqlite = $CLASS->new(sqitch => $sqitch),
     'Create sqlite with sqitch with --client and --db-name';
 is $sqlite->client, 'foo/bar', 'The client should be grabbed from sqitch';
-is $sqlite->db_name, file('my.db'), 'The db_name should be grabbed from sqitch';
-is $sqlite->destination, $sqlite->db_name->stringify,
-    'Destination should be optioned db_name stringified';
-is_deeply [$sqlite->sqlite3], [$sqlite->client, @std_opts, $sqlite->db_name],
+is $sqlite->uri->as_string, 'db:sqlite:' . file('my.db'),
+    'The uri should be grabbed from sqitch';
+is $sqlite->target, $sqlite->uri->as_string,
+    'Target should be optioned uri stringified';
+is $sqlite->destination, $sqlite->uri->as_string,
+    'Destination should be optioned uri stringified';
+is_deeply [$sqlite->sqlite3],
+    [$sqlite->client, @std_opts, $sqlite->uri->dbname],
     'sqlite3 command should have option values';
+
+$mock_config->unmock_all;
 
 ##############################################################################
 # Test _run(), _capture(), and _spool().
 my $db_name = $tmp_dir->file('sqitch.db');
-$sqitch = App::Sqitch->new;
-ok $sqlite = $CLASS->new(sqitch => $sqitch, db_name => $db_name),
+$sqitch = App::Sqitch->new(_engine => 'sqlite');
+ok $sqlite = $CLASS->new(sqitch => $sqitch, uri => URI->new("db:sqlite:$db_name")),
     'Instantiate with a temporary database file';
 can_ok $sqlite, qw(_run _capture _spool);
 
@@ -217,7 +296,10 @@ for my $v (qw(
     4.1.30
 )) {
     $sqlite_version = "$v 2012-04-03 19:43:07 86b8481be7e76cccc92d14ce762d21bfb69504af";
-    ok my $sqlite = $CLASS->new(sqitch => $sqitch), "Create command for v$v";
+    ok my $sqlite = $CLASS->new(
+        sqitch => $sqitch,
+        uri => URI->new('db:sqlite:foo.db')
+    ), "Create command for v$v";
     ok $sqlite->sqlite3, "Should be okay with sqlite v$v";
 }
 
@@ -243,19 +325,22 @@ for my $v (qw(
 }
 
 $mock_sqitch->unmock_all;
-$mock_config->unmock_all;
 
 ##############################################################################
-# Can we do live tests?
 my $alt_db = $db_name->dir->file('sqitchtest.db');
+# Can we do live tests?
 DBIEngineTest->run(
     class         => $CLASS,
     sqitch_params => [
         top_dir   => Path::Class::dir(qw(t engine)),
         plan_file => Path::Class::file(qw(t engine sqitch.plan)),
+        _engine   => 'sqlite',
     ],
-    engine_params     => [ db_name => $db_name ],
-    alt_engine_params => [ db_name => $db_name, sqitch_db => $alt_db ],
+    engine_params     => [ uri => URI->new("db:sqlite:$db_name") ],
+    alt_engine_params => [
+        uri        => URI->new("db:sqlite:$db_name"),
+        registry      => 'sqitchtest',
+    ],
     skip_unless       => sub {
         my $self = shift;
 

@@ -12,7 +12,7 @@ use utf8;
 
 extends 'Config::GitLike';
 
-our $VERSION = '0.983';
+our $VERSION = '0.990';
 
 has '+confname' => ( default => 'sqitch.conf' );
 has '+encoding' => ( default => 'UTF-8' );
@@ -79,7 +79,7 @@ sub initial_key {
 }
 
 __PACKAGE__->meta->make_immutable;
-no Mouse;
+no Moose;
 
 =head1 Name
 
@@ -209,4 +209,3 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 =cut
-

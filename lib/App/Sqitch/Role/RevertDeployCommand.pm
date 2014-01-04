@@ -13,7 +13,12 @@ requires 'command';
 requires 'options';
 requires 'configure';
 
-our $VERSION = '0.983';
+our $VERSION = '0.990';
+
+has target => (
+    is  => 'ro',
+    isa => 'Str',
+);
 
 has verify => (
     is       => 'ro',
@@ -74,6 +79,7 @@ has revert_variables => (
 around options => sub {
     my ($orig, $class) = @_;
     return ($class->$orig), qw(
+        target|t=s
         mode=s
         verify!
         set|s=s%
@@ -90,6 +96,7 @@ around configure => sub {
 
     my $params = $class->$orig($config, $opt);
     $params->{log_only} = $opt->{log_only} if $opt->{log_only};
+    $params->{target}   = $opt->{target}   if $opt->{target};
 
     # Verify?
     $params->{verify} = $opt->{verify}
@@ -155,7 +162,7 @@ __END__
 
 =head1 Name
 
-App::Sqitch::Role::RevertDepoyCommand - A command that reverts and deploys
+App::Sqitch::Role::RevertDeployCommand - A command that reverts and deploys
 
 =head1 Synopsis
 

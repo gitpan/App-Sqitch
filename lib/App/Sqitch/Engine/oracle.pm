@@ -16,7 +16,7 @@ extends 'App::Sqitch::Engine';
 sub dbh; # required by DBIEngine;
 with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.983';
+our $VERSION = '0.990';
 
 BEGIN {
     # We tell the Oracle connector which encoding to use. The last part of the
@@ -27,100 +27,25 @@ BEGIN {
     $ENV{SQLPATH} = '';
 }
 
-has client => (
-    is       => 'ro',
-    isa      => 'Str',
-    lazy     => 1,
-    required => 1,
-    default  => sub {
-        my $sqitch = shift->sqitch;
-        $sqitch->db_client
-            || $sqitch->config->get( key => 'core.oracle.client' )
-            || file(
-                ($ENV{ORACLE_HOME} || ()),
-                'sqlplus' . ( $^O eq 'MSWin32' ? '.exe' : '' )
-            )->stringify;
-    },
-);
-
-has username => (
-    is       => 'ro',
-    isa      => 'Maybe[Str]',
-    lazy     => 1,
-    required => 0,
-    default  => sub {
-        my $sqitch = shift->sqitch;
-        $sqitch->db_username || $sqitch->config->get( key => 'core.oracle.username' );
-    },
-);
-
-has password => (
-    is       => 'ro',
-    isa      => 'Maybe[Str]',
-    lazy     => 1,
-    required => 0,
-    default  => sub {
-        shift->sqitch->config->get( key => 'core.oracle.password' );
-    },
-);
-
-has db_name => (
-    is       => 'ro',
-    isa      => 'Maybe[Str]',
-    lazy     => 1,
-    required => 0,
-    default  => sub {
-        my $self   = shift;
-        my $sqitch = $self->sqitch;
-        $sqitch->db_name || $sqitch->config->get( key => 'core.oracle.db_name' );
-    },
-);
-
-has destination => (
-    is       => 'ro',
-    isa      => 'Str',
-    lazy     => 1,
-    required => 1,
+has '+destination' => (
     default  => sub {
         my $self = shift;
-        $self->db_name
-            || $ENV{TWO_TASK}
+
+        # Just use the target unless it looks like a URI.
+        my $target = $self->target;
+        return $target if $target !~ /:/;
+
+        # Use the URI sans password, and with the database name added.
+        my $uri = $self->uri->clone;
+        $uri->password(undef) if $uri->password;
+        $uri->dbname(
+               $ENV{TWO_TASK}
             || ( $^O eq 'MSWin32' ? $ENV{LOCAL} : undef )
             || $ENV{ORACLE_SID}
-            || $self->username
+            || $uri->user
             || $self->sqitch->sysuser
-    },
-);
-
-has host => (
-    is       => 'ro',
-    isa      => 'Maybe[Str]',
-    lazy     => 1,
-    required => 0,
-    default  => sub {
-        my $sqitch = shift->sqitch;
-        $sqitch->db_host || $sqitch->config->get( key => 'core.oracle.host' );
-    },
-);
-
-has port => (
-    is       => 'ro',
-    isa      => 'Maybe[Int]',
-    lazy     => 1,
-    required => 0,
-    default  => sub {
-        my $sqitch = shift->sqitch;
-        $sqitch->db_port || $sqitch->config->get( key => 'core.oracle.port' );
-    },
-);
-
-has sqitch_schema => (
-    is       => 'ro',
-    isa      => 'Maybe[Str]',
-    lazy     => 1,
-    required => 1,
-    default  => sub {
-        shift->sqitch->config->get( key => 'core.oracle.sqitch_schema' )
+        ) unless $uri->dbname;
+        return $uri->as_string;
     },
 );
 
@@ -136,31 +61,25 @@ has sqlplus => (
     },
 );
 
+sub key    { 'oracle' }
+sub name   { 'Oracle' }
+sub driver { 'DBD::Oracle 1.23' }
+sub default_registry { undef }
+
+sub default_client {
+    file( ($ENV{ORACLE_HOME} || ()), 'sqlplus' )->stringify
+}
+
 has dbh => (
     is      => 'rw',
     isa     => 'DBI::db',
     lazy    => 1,
     default => sub {
         my $self = shift;
-        # XXX require DBD::Oracle 1.23.
-        try { require DBD::Oracle } catch {
-            hurl oracle => __ 'DBD::Oracle module required to manage Oracle' if $@;
-        };
+        $self->use_driver;
 
-        my $dsn = 'dbi:Oracle:';
-        if ($self->host || $self->port) {
-            $dsn .=  join ';' => map {
-                "$_->[0]=$_->[1]"
-            } grep { $_->[1] } (
-                [ sid   => $self->db_name ],
-                [ host  => $self->host    ],
-                [ port  => $self->port    ],
-            );
-        } else {
-            $dsn .= $self->db_name if $self->db_name;
-        }
-
-        DBI->connect($dsn, $self->username, $self->password, {
+        my $uri = $self->uri;
+        DBI->connect($uri->dbi_dsn, $uri->user, $uri->password, {
             PrintError        => 0,
             RaiseError        => 0,
             AutoCommit        => 1,
@@ -179,7 +98,7 @@ has dbh => (
                         nls_timestamp_format
                         nls_timestamp_tz_format
                     );
-                    if (my $schema = $self->sqitch_schema) {
+                    if (my $schema = $self->registry) {
                         try {
                             $dbh->do("ALTER SESSION SET CURRENT_SCHEMA = $schema");
                             # http://www.nntp.perl.org/group/perl.dbi.dev/2013/11/msg7622.html
@@ -189,21 +108,10 @@ has dbh => (
                     return;
                 },
             },
+            $uri->query_params,
         });
     }
 );
-
-sub config_vars {
-    return (
-        client        => 'any',
-        username      => 'any',
-        password      => 'any',
-        db_name       => 'any',
-        host          => 'any',
-        port          => 'int',
-        sqitch_schema => 'any',
-    );
-}
 
 sub _log_tags_param {
     [ map { $_->format_name } $_[1]->tags ];
@@ -412,7 +320,7 @@ sub initialized {
           FROM all_tables
          WHERE owner = UPPER(?)
            AND table_name = 'CHANGES'
-    }, undef, $self->sqitch_schema || $self->username)->[0];
+    }, undef, $self->registry || $self->uri->user)->[0];
 }
 
 sub _log_event {
@@ -547,7 +455,7 @@ sub is_deployed_tag {
 
 sub initialize {
     my $self   = shift;
-    my $schema = $self->sqitch_schema;
+    my $schema = $self->registry;
     hurl engine => __ 'Sqitch already initialized' if $self->initialized;
 
     # Load up our database.
@@ -557,11 +465,11 @@ sub initialize {
     $self->$meth(
         (
             $schema ? (
-                "DEFINE sqitch_schema=$schema"
+                "DEFINE registry=$schema"
             ) : (
-                # Select the current schema into &sqitch_schema.
+                # Select the current schema into &registry.
                 # http://www.orafaq.com/node/515
-                'COLUMN sname for a30 new_value sqitch_schema',
+                'COLUMN sname for a30 new_value registry',
                 q{SELECT SYS_CONTEXT('USERENV', 'SESSION_SCHEMA') AS sname FROM DUAL;},
             )
         ),
@@ -693,8 +601,8 @@ sub run_verify {
 
 sub run_handle {
     my ($self, $fh) = @_;
-    my $target = $self->_script;
-    open my $tfh, '<:utf8_strict', \$target;
+    my $conn = $self->_script;
+    open my $tfh, '<:utf8_strict', \$conn;
     $self->sqitch->spool( [$tfh, $fh], $self->sqlplus );
 }
 
@@ -752,22 +660,23 @@ sub _no_table_error  {
 
 sub _script {
     my $self   = shift;
-    my $target = $self->username // '';
-    if (my $pass = $self->password) {
+    my $uri    = $self->uri;
+    my $conn = $uri->user // '';
+    if (my $pass = $uri->password) {
         $pass =~ s/"/""/g;
-        $target .= qq{/"$pass"};
+        $conn .= qq{/"$pass"};
     }
-    if (my $db = $self->db_name) {
-        $target .= '@';
+    if (my $db = $uri->dbname) {
+        $conn .= '@';
         $db =~ s/"/""/g;
-        if ($self->host || $self->port) {
-            $target .= '//' . ($self->host || '');
-            if (my $port = $self->port) {
-                $target .= ":$port";
+        if ($uri->host || $uri->_port) {
+            $conn .= '//' . ($uri->host || '');
+            if (my $port = $uri->_port) {
+                $conn .= ":$port";
             }
-            $target .= qq{/"$db"};
+            $conn .= qq{/"$db"};
         } else {
-            $target .= qq{"$db"};
+            $conn .= qq{"$db"};
         }
     }
     my %vars = $self->variables;
@@ -777,7 +686,7 @@ sub _script {
         'WHENEVER OSERROR EXIT 9;',
         'WHENEVER SQLERROR EXIT SQL.SQLCODE;',
         (map {; (my $v = $vars{$_}) =~ s/"/""/g; qq{DEFINE $_="$v"} } sort keys %vars),
-        "connect $target",
+        "connect $conn",
         @_
     );
 }
@@ -791,11 +700,11 @@ sub _run {
 
 sub _capture {
     my $self = shift;
-    my $target = $self->_script(@_);
+    my $conn = $self->_script(@_);
     my @out;
 
     require IPC::Run3;
-    IPC::Run3::run3( [$self->sqlplus], \$target, \@out );
+    IPC::Run3::run3( [$self->sqlplus], \$conn, \@out );
     if (my $err = $?) {
         # Ugh, send everything to STDERR.
         $self->sqitch->vent(@out);
@@ -829,23 +738,6 @@ supports Oracle 8.4.0 and higher.
 
 =head1 Interface
 
-=head3 Class Methods
-
-=head3 C<config_vars>
-
-  my %vars = App::Sqitch::Engine::oracle->config_vars;
-
-Returns a hash of names and types to use for variables in the C<core.oracle>
-section of the a Sqitch configuration file. The variables and their types are:
-
-  client        => 'any'
-  username      => 'any'
-  password      => 'any'
-  db_name       => 'any'
-  host          => 'any'
-  port          => 'int'
-  sqitch_schema => 'any'
-
 =head2 Instance Methods
 
 =head3 C<initialized>
@@ -859,7 +751,7 @@ has not.
 
   $oracle->initialize;
 
-Initializes a database for Sqitch by installing the Sqitch metadata schema.
+Initializes a database for Sqitch by installing the Sqitch registry schema.
 
 =head1 Author
 

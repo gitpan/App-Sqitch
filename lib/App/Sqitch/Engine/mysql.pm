@@ -17,89 +17,29 @@ extends 'App::Sqitch::Engine';
 sub dbh; # required by DBIEngine;
 with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.983';
+our $VERSION = '0.990';
 
-has client => (
+has registry_uri => (
     is       => 'ro',
-    isa      => 'Str',
+    isa      => 'URI::db',
     lazy     => 1,
     required => 1,
     default  => sub {
-        my $sqitch = shift->sqitch;
-        $sqitch->db_client
-            || $sqitch->config->get( key => 'core.mysql.client' )
-            || 'mysql' . ( $^O eq 'MSWin32' ? '.exe' : '' );
+        my $self = shift;
+        my $uri = $self->uri->clone;
+        $uri->dbname($self->registry);
+        return $uri;
     },
 );
 
-has username => (
-    is       => 'ro',
-    isa      => 'Maybe[Str]',
-    lazy     => 1,
-    required => 0,
-    default  => sub {
-        my $sqitch = shift->sqitch;
-        $sqitch->db_username || $sqitch->config->get( key => 'core.mysql.username' );
-    },
-);
-
-has password => (
-    is       => 'ro',
-    isa      => 'Maybe[Str]',
-    lazy     => 1,
-    required => 0,
-    default  => sub {
-        shift->sqitch->config->get( key => 'core.mysql.password' );
-    },
-);
-
-has db_name => (
-    is       => 'ro',
-    isa      => 'Maybe[Str]',
-    lazy     => 1,
-    required => 0,
-    default  => sub {
-        my $self   = shift;
-        my $sqitch = $self->sqitch;
-        $sqitch->db_name || $sqitch->config->get( key => 'core.mysql.db_name' );
-    },
-);
-
-sub destination { shift->db_name }
-
-has sqitch_db => (
-    is       => 'ro',
-    isa      => 'Maybe[Str]',
-    lazy     => 1,
-    required => 1,
-    default  => sub {
-        shift->sqitch->config->get( key => 'core.mysql.sqitch_db' ) || 'sqitch';
-    },
-);
-
-sub meta_destination { shift->sqitch_db }
-
-has host => (
-    is       => 'ro',
-    isa      => 'Maybe[Str]',
-    lazy     => 1,
-    required => 0,
-    default  => sub {
-        my $sqitch = shift->sqitch;
-        $sqitch->db_host || $sqitch->config->get( key => 'core.mysql.host' );
-    },
-);
-
-has port => (
-    is       => 'ro',
-    isa      => 'Maybe[Int]',
-    lazy     => 1,
-    required => 0,
-    default  => sub {
-        my $sqitch = shift->sqitch;
-        $sqitch->db_port || $sqitch->config->get( key => 'core.mysql.port' );
-    },
-);
+sub registry_destination {
+    my $uri = shift->registry_uri;
+    if ($uri->password) {
+        $uri = $uri->clone;
+        $uri->password(undef);
+    }
+    return $uri->as_string;
+}
 
 has dbh => (
     is      => 'rw',
@@ -107,22 +47,10 @@ has dbh => (
     lazy    => 1,
     default => sub {
         my $self = shift;
-        try { require DBD::mysql } catch {
-            hurl mysql => __ 'DBD::mysql module required to manage MySQL';
-        };
+        $self->use_driver;
 
-        my $dsn = 'dbi:mysql:database=' . ($self->sqitch_db || hurl mysql => __(
-            'No database specified; use --db-name or set "core.mysql.db_name" via sqitch config'
-        ));
-
-        $dsn .= join '' => map {
-            ";$_->[0]=$_->[1]"
-        } grep { $_->[1] } (
-            [ host => $self->host ],
-            [ port => $self->port ],
-        );
-
-        my $dbh = DBI->connect($dsn, $self->username, $self->password, {
+        my $uri = $self->registry_uri;
+        my $dbh = DBI->connect($uri->dbi_dsn, scalar $uri->user, scalar $uri->password, {
             PrintError           => 0,
             RaiseError           => 0,
             AutoCommit           => 1,
@@ -157,6 +85,7 @@ has dbh => (
                     return;
                 },
             },
+            $uri->query_params,
         });
 
         # Make sure we support this version.
@@ -178,18 +107,25 @@ has mysql => (
     auto_deref => 1,
     default    => sub {
         my $self = shift;
+        my $uri  = $self->uri;
+
+        $self->sqitch->warn(__x
+            'Database name missing in URI "{uri}"',
+            uri => $uri
+        ) unless $uri->dbname;
+
         my @ret  = ( $self->client );
         for my $spec (
-            [ user     => $self->username ],
-            [ database => $self->db_name  ],
-            [ host     => $self->host     ],
-            [ port     => $self->port     ],
+            [ user     => $uri->user   ],
+            [ database => $uri->dbname ],
+            [ host     => $uri->host   ],
+            [ port     => $uri->_port  ],
         ) {
             push @ret, "--$spec->[0]" => $spec->[1] if $spec->[1];
         }
 
         # Special-case --password, which requires = before the value. O_o
-        if (my $pw = $self->password) {
+        if (my $pw = $uri->password) {
             push @ret, "--password=$pw";
         }
 
@@ -207,17 +143,10 @@ has mysql => (
     },
 );
 
-sub config_vars {
-    return (
-        client    => 'any',
-        username  => 'any',
-        password  => 'any',
-        db_name   => 'any',
-        host      => 'any',
-        port      => 'int',
-        sqitch_db => 'any',
-    );
-}
+sub key    { 'mysql' }
+sub name   { 'MySQL' }
+sub driver { 'DBD::mysql 4.018' }
+sub default_client { 'mysql' }
 
 sub _char2ts {
     $_[1]->set_time_zone('UTC')->iso8601;
@@ -248,28 +177,28 @@ sub initialized {
           FROM information_schema.tables
          WHERE table_schema = ?
            AND table_name   = ?
-    }, undef, $self->sqitch_db, 'changes')->[0];
+    }, undef, $self->registry, 'changes')->[0];
 }
 
 sub initialize {
     my $self   = shift;
     hurl engine => __x(
         'Sqitch database {database} already initialized',
-        database => $self->sqitch_db,
+        database => $self->registry,
     ) if $self->initialized;
 
     # Create the Sqitch database if it does not exist.
-    (my $db = $self->sqitch_db) =~ s/"/""/g;
+    (my $db = $self->registry) =~ s/"/""/g;
     $self->_run(
         '--execute'  => sprintf(
             'SET sql_mode = ansi; CREATE DATABASE IF NOT EXISTS "%s"',
-            $self->sqitch_db
+            $self->registry
         ),
     );
 
     # Connect to the Sqitch database.
     my @cmd = $self->mysql;
-    $cmd[1 + firstidx { $_ eq '--database' } @cmd ] = $self->sqitch_db;
+    $cmd[1 + firstidx { $_ eq '--database' } @cmd ] = $self->registry;
     my $file = file(__FILE__)->dir->file('mysql.sql');
 
     $self->sqitch->run( @cmd, '--execute', "source $file" );
@@ -382,41 +311,6 @@ App::Sqitch::Engine::mysql - Sqitch MySQL Engine
 =head1 Description
 
 App::Sqitch::Engine::mysql provides the MySQL storage engine for Sqitch.
-
-=head1 Interface
-
-=head3 Class Methods
-
-=head3 C<config_vars>
-
-  my %vars = App::Sqitch::Engine::mysql->config_vars;
-
-Returns a hash of names and types to use for variables in the C<core.mysql>
-section of the a Sqitch configuration file. The variables and their types are:
-
-  client    => 'any'
-  db_name   => 'any'
-  sqitch_db => 'any'
-
-=head2 Accessors
-
-=head3 C<client>
-
-Returns the path to the MySQL client. If C<--db-client> was passed to
-C<sqitch>, that's what will be returned. Otherwise, it uses the
-C<core.mysql.client> configuration value, or else defaults to C<mysql> (or
-C<mysql.exe> on Windows), which should work if it's in your path.
-
-=head3 C<db_name>
-
-Returns the name of the database file. If C<--db-name> was passed to C<sqitch>
-that's what will be returned.
-
-=head3 C<sqitch_db>
-
-Name of the MySQL database file to use for the Sqitch metadata tables.
-Returns the value of the C<core.mysql.sqitch_db> configuration value, or else
-defaults to F<sqitch.db> in the same directory as C<db_name>.
 
 =head1 Author
 

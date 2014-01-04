@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use 5.010;
 use utf8;
-use Test::More tests => 298;
+use Test::More tests => 351;
 #use Test::More 'no_plan';
 use Test::NoWarnings;
 use Test::Exception;
@@ -142,11 +142,14 @@ is $offset, undef, 'Offset should not be set';
 is $changes->get('@FIRST~'), $yo1, 'Should get yo1 for @FIRST~';
 is $offset, 1, 'Should have offset 1 for @FIRST~';
 
+ok $changes->contains('@FIRST'), 'Should contain @FIRST';
 is $changes->find('@FIRST'), $bar, 'Should find bar for @FIRST';
 is $offset, 0, 'Should have no offset for @FIRST';
 $offset = undef;
+ok !$changes->contains('@FIRST^'), 'Should not contain @FIRST^';
 is $changes->find('@FIRST^'), undef, 'Should find nothing for @FIRST^';
 is $offset, undef, 'Offset should not be set';
+ok $changes->contains('@FIRST~'), 'Should contain @FIRST~';
 is $changes->find('@FIRST~'), $yo1, 'Should find yo1 for @FIRST~';
 is $offset, 1, 'Should have offset 1 for @FIRST~';
 $earliest_id = undef;
@@ -182,11 +185,14 @@ $offset = undef;
 is $changes->get('@LAST~'), undef, 'should get nothing for @LAST~';
 is $offset, undef, 'Offset should not be set';
 
+ok $changes->contains('@LAST'), 'Should contain @LAST';
 is $changes->find('@LAST'), $yo1, 'Should find yo1 for @LAST';
 is $offset, 0, 'Should have offset 0 for @LAST';
+ok $changes->contains('@LAST^'), 'Should contain @LAST^';
 is $changes->find('@LAST^'), $bar, 'should find bar for @LAST^';
 is $offset, 1, 'Should have offset 1 for @LAST^';
 $offset = undef;
+ok !$changes->contains('@LAST~'), 'Should not contain @LAST~';
 is $changes->find('@LAST~'), undef, 'should find nothing for @LAST~';
 is $offset, undef, 'Offset should not be set';
 $latest_id = undef;
@@ -224,6 +230,12 @@ is $changes->index_of('@HEAD^'), 3, 'Should get 3 for @HEAD^';
 is $changes->index_of('@HEAD~'), undef, 'Should get undef for @HEAD~';
 is $changes->index_of('@ROOT~'), 1, 'Should get 1 for @ROOT~';
 is $changes->index_of('@ROOT^'), undef, 'Should get undef for @ROOT^';
+is $changes->index_of('HEAD'), 4, 'Should get 4 for HEAD';
+is $changes->index_of('ROOT'), 0, 'Should get 0 for ROOT';
+is $changes->index_of('HEAD^'), 3, 'Should get 3 for HEAD^';
+is $changes->index_of('HEAD~'), undef, 'Should get undef for HEAD~';
+is $changes->index_of('ROOT~'), 1, 'Should get 1 for ROOT~';
+is $changes->index_of('ROOT^'), undef, 'Should get undef for ROOT^';
 
 is $changes->get('foo'), $foo, 'Should get foo for "foo"';
 is $changes->get('foo~'), $bar, 'Should get bar for "foo~"';
@@ -245,6 +257,10 @@ is $changes->get('@HEAD^'), $baz, 'Should get baz for "@HEAD^"';
 is $changes->get('@HEAD^^'), $yo1, 'Should get yo1 for "@HEAD^^"';
 is $changes->get('@HEAD^3'), $bar, 'Should get bar for "@HEAD^3"';
 is $changes->get('@ROOT'), $foo, 'Should get foo for "@ROOT"';
+is $changes->get('HEAD^'), $baz, 'Should get baz for "HEAD^"';
+is $changes->get('HEAD^^'), $yo1, 'Should get yo1 for "HEAD^^"';
+is $changes->get('HEAD^3'), $bar, 'Should get bar for "HEAD^3"';
+is $changes->get('ROOT'), $foo, 'Should get foo for "ROOT"';
 
 is $changes->get('yo@alpha'), $yo1, 'Should get yo1 for yo@alpha';
 is $changes->get('yo@HEAD'), $yo2, 'Should get yo2 for yo@HEAD';
@@ -272,6 +288,28 @@ is $changes->find('yo@alpha~'), $baz, 'Should find baz with "yo@alpha^"';
 is $changes->find('yo@HEAD^'), $baz, 'Should find baz with yo@HEAD^';
 is $changes->find('@HEAD^'), $baz, 'Should find baz with @HEAD^';
 is $changes->find('@ROOT~'), $bar, 'Should find bar with @ROOT~^';
+is $changes->find('HEAD^'), $baz, 'Should find baz with HEAD^';
+is $changes->find('ROOT~'), $bar, 'Should find bar with ROOT~^';
+
+ok $changes->contains('yo'), 'Should contain yo1 with "yo"';
+ok $changes->contains('yo@alpha'), 'Should contain yo1 with "yo@alpha"';
+ok $changes->contains('yo@HEAD'), 'Should contain yo2 with yo@HEAD';
+ok $changes->contains('foo'), 'Should contain foo for "foo"';
+ok $changes->contains('foo@alpha'), 'Should contain foo for "foo@alpha"';
+ok $changes->contains('foo@HEAD'), 'Should contain foo for "foo@HEAD"';
+ok $changes->contains('yo^'), 'Should contain bar with "yo^"';
+ok $changes->contains('yo^^'), 'Should contain foo with "yo^^"';
+ok $changes->contains('yo^2'), 'Should contain foo with "yo^2"';
+ok $changes->contains('yo~'), 'Should contain baz with "yo~"';
+ok $changes->contains('yo~~'), 'Should contain yo2 with "yo~~"';
+ok $changes->contains('yo~2'), 'Should contain yo2 with "yo~2"';
+ok $changes->contains('yo@alpha^'), 'Should contain bar with "yo@alpha^"';
+ok $changes->contains('yo@alpha~'), 'Should contain baz with "yo@alpha^"';
+ok $changes->contains('yo@HEAD^'), 'Should contain baz with yo@HEAD^';
+ok $changes->contains('@HEAD^'), 'Should contain baz with @HEAD^';
+ok $changes->contains('@ROOT~'), 'Should contain bar with @ROOT~^';
+ok $changes->contains('HEAD^'), 'Should contain baz with HEAD^';
+ok $changes->contains('ROOT~'), 'Should contain bar with ROOT~^';
 
 throws_ok { $changes->get('yo') } 'App::Sqitch::X',
     'Should get multiple indexes error looking for index of "yo"';
@@ -299,6 +337,8 @@ is $changes->index_of($hi->id), 5, 'Should find "hi" by ID at index 5';
 is $changes->index_of($hi->old_id), 5, 'Should find "hi" by old ID at index 5';
 is $changes->index_of('@ROOT'), 0, 'Index of @ROOT should still be 0';
 is $changes->index_of('@HEAD'), 5, 'Index of @HEAD should now be 5';
+is $changes->index_of('ROOT'), 0, 'Index of ROOT should still be 0';
+is $changes->index_of('HEAD'), 5, 'Index of HEAD should now be 5';
 
 # Now try first_index_of().
 is $changes->first_index_of('non'), undef, 'First index of "non" should be undef';
@@ -339,6 +379,8 @@ ok $changes->append($so, $fu), 'Push so and fu';
 is $changes->count, 8, 'Count should now be eight';
 is $changes->index_of('@ROOT'), 0, 'Index of @ROOT should remain 0';
 is $changes->index_of('@HEAD'), 7, 'Index of @HEAD should now be 7';
+is $changes->index_of('ROOT'), 0, 'Index of ROOT should remain 0';
+is $changes->index_of('HEAD'), 7, 'Index of HEAD should now be 7';
 is_deeply [$changes->changes], [$foo, $bar, $yo1, $baz, $yo2, $hi, $so, $fu],
     'Changes should be in order with $so and $fu at the end';
 
@@ -415,6 +457,8 @@ for my $ref (qw(
         qq{Should not find first index of "$ref" in empty list};
     is $changes->get($ref), undef,
         qq{Should get undef for "$ref" in empty list};
+    ok !$changes->contains($ref),
+        qq{Should not contain "$ref" in empty list};
     is $changes->find($ref), undef,
         qq{Should find undef for "$ref" in empty list};
 }

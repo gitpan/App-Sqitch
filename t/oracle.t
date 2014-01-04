@@ -13,7 +13,8 @@
 #
 # Once the VM is imported into VirtualBox and started, login with the username
 # "oracle" and the password "oracle". Then, in VirtualBox, go to Settings ->
-# Network, select the NAT adapter, and add two port forwarding rules:
+# Network, select the NAT adapter, and add two port forwarding rules
+# (http://barrymcgillin.blogspot.com/2011/12/using-oracle-developer-days-virtualbox.html):
 #
 #   Host Port | Guest Port
 #  -----------+------------
@@ -24,7 +25,21 @@
 #
 #     sqlplus sys/oracle@localhost/ORCL as sysdba
 #
-# Execute this SQL to create the user and give it access:
+#
+# If this fails with either of these errors:
+#
+#    ORA-01017: invalid username/password; logon denied
+#    ORA-21561: OID generation failed
+#
+# Make sure that your computer's hostname is on the localhost line of
+# /etc/hosts (http://sourceforge.net/p/tora/discussion/52737/thread/f68b89ad/):
+#
+#     > hostname
+#     dwhee-ma-2944
+#     > grep 127 /etc/hosts
+#     127.0.0.1	localhost dwhee-ma-2944
+#
+# Once connected, execute this SQL to create the user and give it access:
 #
 #     CREATE USER sqitchtest IDENTIFIED BY oracle;
 #     GRANT ALL PRIVILEGES TO sqitchtest;
@@ -59,16 +74,12 @@ BEGIN {
 }
 
 is_deeply [$CLASS->config_vars], [
-    client        => 'any',
-    username      => 'any',
-    password      => 'any',
-    db_name       => 'any',
-    host          => 'any',
-    port          => 'int',
-    sqitch_schema => 'any',
+    target   => 'any',
+    registry => 'any',
+    client   => 'any',
 ], 'config_vars should return three vars';
 
-my $sqitch = App::Sqitch->new;
+my $sqitch = App::Sqitch->new(_engine => 'oracle');
 isa_ok my $ora = $CLASS->new(sqitch => $sqitch), $CLASS;
 
 my $client = 'sqlplus' . ($^O eq 'MSWin32' ? '.exe' : '');
@@ -80,18 +91,21 @@ ORACLE_HOME: {
         'client should use $ORACLE_HOME';
 }
 
-is $ora->sqitch_schema, undef, 'sqitch_schema default should be undefined';
-for my $attr (qw(username password db_name host port)) {
-    is $ora->$attr, undef, "$attr default should be undef";
-}
+is $ora->registry, undef, 'registry default should be undefined';
+is $ora->uri, 'db:oracle:', 'Default URI should be "db:oracle"';
 
-is $ora->destination, $ENV{TWO_TASK}
-                   || ($^O eq 'MSWin32' ? $ENV{LOCAL} : undef)
-                   || $ENV{ORACLE_SID}
-                   || $sqitch->sysuser,
+my $dest_uri = $ora->uri->clone;
+$dest_uri->dbname(
+        $ENV{TWO_TASK}
+    || ($^O eq 'MSWin32' ? $ENV{LOCAL} : undef)
+    || $ENV{ORACLE_SID}
+    || $sqitch->sysuser
+);
+is $ora->target, $ora->uri, 'Target should be the uri stringified';
+is $ora->destination, $dest_uri->as_string,
     'Destination should fall back on environment variables';
-is $ora->meta_destination, $ora->destination,
-    'Meta destination should be the same as destination';
+is $ora->registry_destination, $ora->destination,
+    'Registry target should be the same as target';
 
 my @std_opts = qw(-S -L /nolog);
 is_deeply [$ora->sqlplus], [$client, @std_opts],
@@ -107,9 +121,7 @@ is $ora->_script, join( "\n" => (
 # Set up username, password, and db_name.
 isa_ok $ora = $CLASS->new(
     sqitch => $sqitch,
-    username => 'fred',
-    password => 'derf',
-    db_name  => 'blah',
+    uri  => URI::db->new('db:oracle://fred:derf@/blah')
 ), $CLASS;
 
 is $ora->_script, join( "\n" => (
@@ -122,10 +134,7 @@ is $ora->_script, join( "\n" => (
 # Add a host name.
 isa_ok $ora = $CLASS->new(
     sqitch => $sqitch,
-    username => 'fred',
-    password => 'derf',
-    db_name  => 'blah',
-    host     => 'there',
+    uri  => URI::db->new('db:oracle://fred:derf@there/blah')
 ), $CLASS;
 
 is $ora->_script('@foo'), join( "\n" => (
@@ -139,11 +148,9 @@ is $ora->_script('@foo'), join( "\n" => (
 # Add a port and varibles.
 isa_ok $ora = $CLASS->new(
     sqitch => $sqitch,
-    username => 'fred',
-    password => 'derf "derf"',
-    db_name  => 'blah "blah"',
-    host     => 'there',
-    port     => 1345,
+    uri => URI::db->new(
+        'db:oracle://fred:derf%20%22derf%22@there:1345/blah%20%22blah%22'
+    ),
 ), $CLASS;
 ok $ora->set_variables(foo => 'baz', whu => 'hi there', yo => q{"stellar"}),
     'Set some variables';
@@ -167,61 +174,80 @@ ENV: {
     for my $env (qw(TWO_TASK ORACLE_SID)) {
         my $ora = $CLASS->new(sqitch => $sqitch);
         local $ENV{$env} = '$ENV=whatever';
-        is $ora->destination, "\$ENV=whatever", "Destination should read \$$env";
-        is $ora->meta_destination, $ora->destination,
-            'Meta destination should be the same as destination';
+        is $ora->target, "db:oracle:", "Target should not read \$$env";
+        is $ora->destination, "db:oracle:\$ENV=whatever", "Destination should read \$$env";
+        is $ora->registry_destination, $ora->destination,
+           'Registry destination should be the same as destination';
     }
 
     my $mocker = Test::MockModule->new('App::Sqitch');
     $mocker->mock(sysuser => 'sysuser=whatever');
     my $ora = $CLASS->new(sqitch => $sqitch);
-    is $ora->destination, 'sysuser=whatever',
+    is $ora->target, 'db:oracle:', 'Target should not fall back on sysuser';
+    is $ora->destination, 'db:oracle:sysuser=whatever',
         'Destination should fall back on sysuser';
-    is $ora->meta_destination, $ora->destination,
-        'Meta destination should be the same as destination';
-
-    $ora = $CLASS->new(sqitch => $sqitch, username => 'hi');
-    is $ora->destination, 'hi', 'Destination should read username';
-    is $ora->meta_destination, $ora->destination,
-        'Meta destination should be the same as destination';
+    is $ora->registry_destination, $ora->destination,
+        'Registry destination should be the same as destination';
 
     $ENV{TWO_TASK} = 'mydb';
     $ora = $CLASS->new(sqitch => $sqitch, username => 'hi');
-    is $ora->destination, 'mydb', 'Destination should prefer $TWO_TASK to username';
-    is $ora->meta_destination, $ora->destination,
-        'Meta destination should be the same as destination';
+    is $ora->target, 'db:oracle:', 'Target should be the default';
+    is $ora->destination, 'db:oracle:mydb',
+        'Destination should prefer $TWO_TASK to username';
+    is $ora->registry_destination, $ora->destination,
+        'Registry destination should be the same as destination';
 }
 
 ##############################################################################
 # Make sure config settings override defaults.
 my %config = (
-    'core.oracle.client'        => '/path/to/sqlplus',
-    'core.oracle.username'      => 'freddy',
-    'core.oracle.password'      => 's3cr3t',
-    'core.oracle.db_name'       => 'widgets',
-    'core.oracle.host'          => 'db.example.com',
-    'core.oracle.port'          => 1234,
-    'core.oracle.sqitch_schema' => 'meta',
+    'core.oracle.client'   => '/path/to/sqlplus',
+    'core.oracle.target'   => 'db:oracle://bob:hi@db.net:12/howdy',
+    'core.oracle.registry' => 'meta',
 );
 my $mock_config = Test::MockModule->new('App::Sqitch::Config');
 $mock_config->mock(get => sub { $config{ $_[2] } });
 ok $ora = $CLASS->new(sqitch => $sqitch), 'Create another ora';
 
 is $ora->client, '/path/to/sqlplus', 'client should be as configured';
-is $ora->username, 'freddy', 'username should be as configured';
-is $ora->password, 's3cr3t', 'password should be as configured';
-is $ora->db_name, 'widgets', 'db_name should be as configured';
-is $ora->destination, 'widgets', 'destination should default to db_name';
-is $ora->meta_destination, 'widgets', 'meta_destination should default to db_name';
-is $ora->host, 'db.example.com', 'host should be as configured';
-is $ora->port, 1234, 'port should be as configured';
-is $ora->sqitch_schema, 'meta', 'sqitch_schema should be as configured';
+is $ora->uri->as_string, 'db:oracle://bob:hi@db.net:12/howdy',
+    'DB URI should be as configured';
+is $ora->target, $ora->uri->as_string, 'Target should be the URI stringified';
+like $ora->destination, qr{^db:oracle://bob:?\@db\.net:12/howdy$},
+    'Destination should be the URI without the password';
+is $ora->registry_destination, $ora->destination,
+    'registry_destination should replace be the same URI';
+is $ora->registry, 'meta', 'registry should be as configured';
+is_deeply [$ora->sqlplus], ['/path/to/sqlplus', @std_opts],
+    'sqlplus command should be configured';
+
+%config = (
+    'core.oracle.client'   => '/path/to/sqlplus',
+    'core.oracle.username' => 'freddy',
+    'core.oracle.password' => 's3cr3t',
+    'core.oracle.db_name'  => 'widgets',
+    'core.oracle.host'     => 'db.example.com',
+    'core.oracle.port'     => 1234,
+    'core.oracle.registry' => 'meta',
+);
+
+ok $ora = $CLASS->new(sqitch => $sqitch), 'Create yet another ora';
+is $ora->client, '/path/to/sqlplus', 'client should be as configured';
+is $ora->uri->as_string, 'db:oracle://freddy:s3cr3t@db.example.com:1234/widgets',
+    'DB URI should be constructed from old config variables';
+is $ora->target, $ora->uri->as_string, 'Target should be the URI stringified';
+like $ora->destination, qr{^db:oracle://freddy:?\@db\.example\.com:1234/widgets$},
+    'Destination should be the URI without the password';
+is $ora->registry_destination, $ora->destination,
+    'registry_destination should be the same URI';
+is $ora->registry, 'meta', 'registry should be as configured';
 is_deeply [$ora->sqlplus], ['/path/to/sqlplus', @std_opts],
     'sqlplus command should be configured';
 
 ##############################################################################
 # Now make sure that Sqitch options override configurations.
 $sqitch = App::Sqitch->new(
+    _engine     => 'oracle',
     db_client   => '/some/other/sqlplus',
     db_username => 'anna',
     db_name     => 'widgets_dev',
@@ -232,14 +258,14 @@ $sqitch = App::Sqitch->new(
 ok $ora = $CLASS->new(sqitch => $sqitch), 'Create a ora with sqitch with options';
 
 is $ora->client, '/some/other/sqlplus', 'client should be as optioned';
-is $ora->username, 'anna', 'username should be as optioned';
-is $ora->password, 's3cr3t', 'password should still be as configured';
-is $ora->db_name, 'widgets_dev', 'db_name should be as optioned';
-is $ora->destination, 'widgets_dev', 'destination should still default to db_name';
-is $ora->meta_destination, 'widgets_dev', 'meta_destination should still default to db_name';
-is $ora->host, 'foo.com', 'host should be as optioned';
-is $ora->port, 98760, 'port should be as optioned';
-is $ora->sqitch_schema, 'meta', 'sqitch_schema should still be as configured';
+is $ora->uri->as_string, 'db:oracle://anna:s3cr3t@foo.com:98760/widgets_dev',
+    'DB URI should have attributes overridden by options';
+is $ora->target, $ora->uri->as_string, 'Target should be the URI stringified';
+like $ora->destination, qr{^db:oracle://anna:?\@foo\.com:98760/widgets_dev$},
+    'Destination should be the URI without the password';
+is $ora->registry_destination, $ora->destination,
+    'registry_destination should still be the same URI';
+is $ora->registry, 'meta', 'registry should still be as configured';
 is_deeply [$ora->sqlplus], ['/some/other/sqlplus', @std_opts],
     'sqlplus command should be as optioned';
 
@@ -377,6 +403,7 @@ END {
 my $user = $ENV{ORAUSER} || 'scott';
 my $pass = $ENV{ORAPASS} || 'tiger';
 my $err = try {
+    $ora->use_driver;
     my $dsn = 'dbi:Oracle:';
     $dbh = DBI->connect($dsn, $user, $pass, {
         PrintError => 0,
@@ -388,16 +415,19 @@ my $err = try {
     eval { $_->message } || $_;
 };
 
+my $uri = URI->new('db:oracle:');
+$uri->user($user);
+$uri->password($pass);
+# $uri->dbname( $ENV{TWO_TASK} || $ENV{LOCAL} || $ENV{ORACLE_SID} );
 DBIEngineTest->run(
     class         => $CLASS,
     sqitch_params => [
-        db_username => $user,
-#        db_name     => $ENV{TWO_TASK} || $ENV{LOCAL} || $ENV{ORACLE_SID},
-        top_dir     => Path::Class::dir(qw(t engine)),
-        plan_file   => Path::Class::file(qw(t engine sqitch.plan)),
+        _engine   => 'oracle',
+        top_dir   => Path::Class::dir(qw(t engine)),
+        plan_file => Path::Class::file(qw(t engine sqitch.plan)),
     ],
-    engine_params     => [ password => $pass ],
-    alt_engine_params => [ password => $pass, sqitch_schema => 'oe' ],
+    engine_params     => [ uri => $uri ],
+    alt_engine_params => [ uri => $uri, registry => 'oe' ],
     skip_unless       => sub {
         my $self = shift;
         die $err if $err;
