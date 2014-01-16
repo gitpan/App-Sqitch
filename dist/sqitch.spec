@@ -1,5 +1,5 @@
 Name:           sqitch
-Version:        0.990
+Version:        0.991
 Release:        1%{?dist}
 Summary:        Sane database change management
 License:        MIT
@@ -239,8 +239,7 @@ Group:          Development/Libraries
 Requires:       sqitch >= %{version}
 Requires:       firebird >= 2.5.0
 Requires:       perl(DBI)
-Requires:       perl(DBD::Firebird) >= 1.15
-Requires:       perl(File::Which)
+Requires:       perl(DBD::Firebird) >= 1.11
 Requires:       perl(Time::HiRes)
 Requires:       perl(Time::Local)
 BuildRequires:  firebird-classic >= 2.5.0
@@ -254,6 +253,10 @@ package bundles the Sqitch Firebird support.
 # No additional files required.
 
 %changelog
+* Thu Jan 16 2014 David E. Wheeler <david.wheeler@iovation.com> 0.991-1
+- Upgrade to v0.991.
+- Remove File::Which from sqitch-firebird.
+
 * Fri Jan 4 2014 David E. Wheeler <david.wheeler@iovation.com> 0.990-1
 - Upgrade to v0.990.
 - Add sqitch-firebird.
