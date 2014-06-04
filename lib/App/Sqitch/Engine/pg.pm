@@ -16,7 +16,7 @@ extends 'App::Sqitch::Engine';
 sub dbh; # required by DBIEngine;
 with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.992';
+our $VERSION = '0.993';
 
 has '+destination' => (
     default  => sub {
@@ -195,7 +195,10 @@ sub initialize {
         my $fh = File::Temp->new;
         print $fh $sql;
         close $fh;
-        $self->_run( '--file' => $fh->filename );
+        $self->_run(
+            '--file' => $fh->filename,
+            '--set'  => "tableopts=$opts",
+        );
     } else {
         # We can take advantage of the :"registry" variable syntax.
         $self->_run(

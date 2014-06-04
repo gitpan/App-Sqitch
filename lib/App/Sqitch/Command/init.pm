@@ -17,7 +17,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.992';
+our $VERSION = '0.993';
 
 sub execute {
     my ( $self, $project ) = @_;
@@ -133,7 +133,7 @@ sub write_config {
     my ( @vars, @comments );
 
     # Write the engine.
-    if (my $ekey = eval { $sqitch->_engine }) {
+    if (my $ekey = eval { $sqitch->engine_key }) {
         push @vars => {
             key   => "core.engine",
             value => $ekey,

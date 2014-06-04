@@ -16,7 +16,7 @@ use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.992';
+our $VERSION = '0.993';
 
 has requires => (
     is       => 'ro',
@@ -59,7 +59,7 @@ has template_name => (
     isa      => 'Str',
     required => 1,
     lazy     => 1,
-    default  => sub { shift->sqitch->_engine },
+    default  => sub { shift->sqitch->engine_key },
 );
 
 has with_scripts => (

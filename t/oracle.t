@@ -309,6 +309,30 @@ like capture_stderr {
 }, qr/^OMGWTF/, 'STDERR should be emitted by _capture';
 
 ##############################################################################
+# Test _file_for_script().
+can_ok $ora, '_file_for_script';
+is $ora->_file_for_script(Path::Class::file 'foo'), 'foo',
+    'File without special characters should be used directly';
+is $ora->_file_for_script(Path::Class::file '"foo"'), '""foo""',
+    'Double quotes should be SQL-escaped';
+
+# Get the temp dir used by the engine.
+ok my $tmpdir = $ora->tmpdir, 'Get temp dir';
+isa_ok $tmpdir, 'Path::Class::Dir', 'Temp dir';
+
+# Make sure a file with @ is aliased.
+my $file = $tmpdir->file('foo@bar.sql');
+$file->touch; # File must exist, because on Windows it gets copied.
+is $ora->_file_for_script($file), $tmpdir->file('foo_bar.sql'),
+    'File with special char should be aliased';
+
+# Make sure double-quotes are escaped.
+$file = $tmpdir->file('"foo$bar".sql');
+$file->touch; # File must exist, because on Windows it gets copied.
+is $ora->_file_for_script($file), $tmpdir->file('""foo_bar"".sql'),
+    'File with special char and quotes should be aliased';
+
+##############################################################################
 # Test file and handle running.
 my @run;
 $mock_ora->mock(_run => sub {shift; @run = @_ });
