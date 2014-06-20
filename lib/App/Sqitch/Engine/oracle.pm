@@ -16,7 +16,7 @@ extends 'App::Sqitch::Engine';
 sub dbh; # required by DBIEngine;
 with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.993';
+our $VERSION = '0.994';
 
 BEGIN {
     # We tell the Oracle connector which encoding to use. The last part of the
@@ -687,7 +687,10 @@ sub _capture {
     my @out;
 
     require IPC::Run3;
-    IPC::Run3::run3( [$self->sqlplus], \$conn, \@out );
+    IPC::Run3::run3(
+        [$self->sqlplus], \$conn, \@out, undef,
+        { return_if_system_error => 1 },
+    );
     if (my $err = $?) {
         # Ugh, send everything to STDERR.
         $self->sqitch->vent(@out);
