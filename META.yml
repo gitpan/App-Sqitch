@@ -18,7 +18,6 @@ build_requires:
   Test::More: '0.94'
   Test::NoWarnings: '0.083'
   lib: '0'
-  perl: v5.10.0
 configure_requires:
   Module::Build: '0.35'
 dynamic_config: 0
@@ -90,7 +89,7 @@ requires:
   namespace::autoclean: '0.11'
   overload: '0'
   parent: '0'
-  perl: v5.10.0
+  perl: '5.010'
   strict: '0'
   utf8: '0'
   warnings: '0'
@@ -98,4 +97,4 @@ resources:
   bugtracker: http://github.com/theory/sqitch/issues/
   homepage: http://sqitch.org/
   repository: http://github.com/theory/sqitch/
-version: '0.994'
+version: '0.995'

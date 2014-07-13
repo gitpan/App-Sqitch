@@ -11,7 +11,7 @@ use List::Util qw(first max);
 use URI::db;
 use namespace::autoclean;
 
-our $VERSION = '0.994';
+our $VERSION = '0.995';
 
 has sqitch => (
     is       => 'ro',
@@ -117,6 +117,13 @@ has max_name_length => (
     is      => 'rw',
     isa     => 'Int',
     default => 0,
+    lazy    => 1,
+    default => sub {
+        my $plan = shift->plan;
+        max map {
+            length $_->format_name_with_tags
+        } $plan->changes;
+    },
 );
 
 has plan => (
@@ -309,11 +316,8 @@ sub deploy {
 
     if ($plan->position == $to_index) {
         # We are up-to-date.
-        hurl {
-            ident   => 'deploy',
-            message => __ 'Nothing to deploy (up-to-date)',
-            exitval => 1,
-        };
+        $sqitch->info( __ 'Nothing to deploy (up-to-date)' );
+        return $self;
 
     } elsif ($plan->position == -1) {
         # Initialize the database, if necessary.

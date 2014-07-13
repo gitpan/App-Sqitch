@@ -18,7 +18,7 @@ my %module_build_args = (
     "David E. Wheeler <david\@justatheory.com>"
   ],
   "dist_name" => "App-Sqitch",
-  "dist_version" => "0.994",
+  "dist_version" => "0.995",
   "license" => "mit",
   "module_name" => "App::Sqitch",
   "recommends" => {
@@ -82,7 +82,7 @@ my %module_build_args = (
     "namespace::autoclean" => "0.11",
     "overload" => 0,
     "parent" => 0,
-    "perl" => "v5.10.0",
+    "perl" => "5.010",
     "strict" => 0,
     "utf8" => 0,
     "warnings" => 0
@@ -104,8 +104,7 @@ my %module_build_args = (
     "Test::MockModule" => "0.05",
     "Test::More" => "0.94",
     "Test::NoWarnings" => "0.083",
-    "lib" => 0,
-    "perl" => "v5.10.0"
+    "lib" => 0
   }
 );
 
@@ -125,8 +124,7 @@ my %fallback_build_requires = (
   "Test::MockModule" => "0.05",
   "Test::More" => "0.94",
   "Test::NoWarnings" => "0.083",
-  "lib" => 0,
-  "perl" => "v5.10.0"
+  "lib" => 0
 );
 
 

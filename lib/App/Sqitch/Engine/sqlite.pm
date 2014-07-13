@@ -16,7 +16,7 @@ extends 'App::Sqitch::Engine';
 sub dbh; # required by DBIEngine;
 with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.994';
+our $VERSION = '0.995';
 
 sub BUILD {
     my $self = shift;
@@ -48,11 +48,12 @@ has registry_uri => (
             $uri->dbname($reg);
         } elsif (my @segs = $uri->path_segments) {
             # Use the same name, but replace $name.$ext with $reg.$ext.
-            my $reg = $self->registry;
-            if ($reg =~ /[.]/) {
-                $segs[-1] =~ s/^[^.]+(?:[.].+)?$/$reg/;
+            my $bn = file( $segs[-1] )->basename;
+            if ($reg =~ /[.]/ || $bn !~ /[.]/) {
+                $segs[-1] =~ s/\Q$bn\E$/$reg/;
             } else {
-                $segs[-1] =~ s/^[^.]+([.].+)?$/$reg$1/;
+                my ($b, $e) = split /[.]/, $bn, 2;
+                $segs[-1] =~ s/\Q$b\E[.]$e$/$reg.$e/;
             }
             $uri->path_segments(@segs);
         } else {
@@ -175,7 +176,7 @@ sub initialize {
     my @cmd = $self->sqlite3;
     $cmd[-1] = $self->registry_uri->dbname;
     my $file = file(__FILE__)->dir->file('sqlite.sql');
-    $self->sqitch->run( @cmd, '.read ' . $self->dbh->quote($file) );
+    $self->sqitch->run( @cmd, $self->_read($file) );
 }
 
 sub _no_table_error  {
@@ -222,19 +223,26 @@ sub _spool {
 
 sub run_file {
     my ($self, $file) = @_;
-    $self->_run( '.read ' . $self->dbh->quote($file) );
+    $self->_run( $self->_read($file) );
 }
 
 sub run_verify {
     my ($self, $file) = @_;
     # Suppress STDOUT unless we want extra verbosity.
     my $meth = $self->can($self->sqitch->verbosity > 1 ? '_run' : '_capture');
-    $self->$meth( '.read ' . $self->dbh->quote($file) );
+    $self->$meth( $self->_read($file) );
 }
 
 sub run_handle {
     my ($self, $fh) = @_;
     $self->_spool($fh);
+}
+
+sub _read {
+    my $self = shift;
+    my $cmd = '.read ' . $self->dbh->quote(shift);
+    return $cmd if $^O ne 'MSWin32';
+    return $self->sqitch->quote_shell($cmd);
 }
 
 __PACKAGE__->meta->make_immutable;
