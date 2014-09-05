@@ -4,8 +4,8 @@ use 5.010;
 use strict;
 use warnings;
 use utf8;
-use Mouse;
-use Mouse::Util::TypeConstraints;
+use Moo;
+use Types::Standard qw(Str);
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use List::Util qw(first);
@@ -15,16 +15,16 @@ use namespace::autoclean;
 extends 'App::Sqitch::Command';
 with 'App::Sqitch::Role::RevertDeployCommand';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has onto_change => (
     is  => 'ro',
-    isa => 'Str',
+    isa => Str,
 );
 
 has upto_change => (
     is  => 'ro',
-    isa => 'Str',
+    isa => Str,
 );
 
 sub options {
@@ -94,6 +94,7 @@ sub execute {
     my $engine = $self->engine_for_target($target);
     $engine->with_verify( $self->verify );
     $engine->no_prompt( $self->no_prompt );
+    $engine->prompt_accept( $self->prompt_accept );
     $engine->log_only( $self->log_only );
 
     # Revert.
@@ -144,6 +145,16 @@ works, read on.
 
 Returns a list of L<Getopt::Long> option specifications for the command-line
 options for the C<rebase> command.
+
+=head2 Attributes
+
+=head3 C<onto_change>
+
+Change onto which to rebase the target.
+
+=head3 C<upto_change>
+
+Change up to which to rebase the target.
 
 =head2 Instance Methods
 

@@ -1,7 +1,7 @@
 package App::Sqitch::Engine::pg;
 
 use 5.010;
-use Mouse;
+use Moo;
 use utf8;
 use Path::Class;
 use DBI;
@@ -10,13 +10,12 @@ use App::Sqitch::X qw(hurl);
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::Plan::Change;
 use List::Util qw(first);
+use App::Sqitch::Types qw(DBH ArrayRef);
 use namespace::autoclean;
 
 extends 'App::Sqitch::Engine';
-sub dbh; # required by DBIEngine;
-with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has '+destination' => (
     default  => sub {
@@ -39,12 +38,10 @@ has '+destination' => (
     },
 );
 
-has psql => (
+has _psql => (
     is         => 'ro',
-    isa        => 'ArrayRef',
+    isa        => ArrayRef,
     lazy       => 1,
-    required   => 1,
-    auto_deref => 1,
     default    => sub {
         my $self = shift;
         my $uri  = $self->uri;
@@ -63,18 +60,25 @@ has psql => (
             push @ret => map {; '--set', "$_=$vars{$_}" } sort keys %vars;
         }
 
-        push @ret => (
-            '--quiet',
-            '--no-psqlrc',
-            '--no-align',
-            '--tuples-only',
-            '--set' => 'ON_ERROR_STOP=1',
-            '--set' => 'registry=' . $self->registry,
-            '--set' => 'sqitch_schema=' . $self->registry, # deprecated
-        );
+        push @ret => $self->_client_opts;
         return \@ret;
     },
 );
+
+sub _client_opts {
+    my $self = shift;
+    return (
+        '--quiet',
+        '--no-psqlrc',
+        '--no-align',
+        '--tuples-only',
+        '--set' => 'ON_ERROR_STOP=1',
+        '--set' => 'registry=' . $self->registry,
+        '--set' => 'sqitch_schema=' . $self->registry, # deprecated
+    );
+}
+
+sub psql { @{ shift->_psql } }
 
 sub key    { 'pg' }
 sub name   { 'PostgreSQL' }
@@ -83,7 +87,7 @@ sub default_client { 'psql' }
 
 has dbh => (
     is      => 'rw',
-    isa     => 'DBI::db',
+    isa     => DBH,
     lazy    => 1,
     default => sub {
         my $self = shift;
@@ -116,10 +120,12 @@ has dbh => (
                     return;
                 },
             },
-            $uri->query_params,
         });
     }
 );
+
+# Need to wait until dbh is defined.
+with 'App::Sqitch::Role::DBIEngine';
 
 sub _log_tags_param {
     [ map { $_->format_name } $_[1]->tags ];
@@ -496,8 +502,7 @@ sub _spool {
     return $sqitch->spool( $fh, $self->psql, @_ );
 }
 
-__PACKAGE__->meta->make_immutable;
-no Mouse;
+1;
 
 __END__
 
@@ -530,6 +535,11 @@ has not.
   $pg->initialize;
 
 Initializes a database for Sqitch by installing the Sqitch registry schema.
+
+=head3 C<psql>
+
+Returns a list containing the the C<psql> client and options to be passed to
+it. Used internally when executing scripts.
 
 =head1 Author
 

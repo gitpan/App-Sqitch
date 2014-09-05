@@ -4,18 +4,18 @@ use 5.010;
 use strict;
 use warnings;
 use utf8;
-use Mouse;
+use Moo;
+use Types::Standard qw(Str ArrayRef);
 use Locale::TextDomain qw(App-Sqitch);
 use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has note => (
     is       => 'ro',
-    isa      => 'ArrayRef[Str]',
-    required => 1,
+    isa      => ArrayRef[Str],
     default  => sub { [] },
 );
 
@@ -73,6 +73,12 @@ App::Sqitch::Command::tag - Add or list tags in a Sqitch plan
 Tags a Sqitch change. The tag will be added to the last change in the plan.
 
 =head1 Interface
+
+=head2 Attributes
+
+=head3 C<note>
+
+Text of the tag note.
 
 =head2 Instance Methods
 

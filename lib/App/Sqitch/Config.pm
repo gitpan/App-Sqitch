@@ -1,18 +1,18 @@
 package App::Sqitch::Config;
 
 use 5.010;
-use Moose;
+use Moo;
 use strict;
 use warnings;
 use Path::Class;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
-use Config::GitLike 1.09;
+use Config::GitLike 1.11;
 use utf8;
 
 extends 'Config::GitLike';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has '+confname' => ( default => 'sqitch.conf' );
 has '+encoding' => ( default => 'UTF-8' );
@@ -70,16 +70,12 @@ sub get_section {
     };
 }
 
-# Mock up original_key for older versions fo Config::GitLike.
-eval 'sub original_key { $_[1] }' unless __PACKAGE__->can('original_key');
-
 sub initial_key {
     my $key = shift->original_key(shift);
     return ref $key ? $key->[0] : $key;
 }
 
-__PACKAGE__->meta->make_immutable;
-no Moose;
+1;
 
 =head1 Name
 

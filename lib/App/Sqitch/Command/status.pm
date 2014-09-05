@@ -6,24 +6,23 @@ use warnings;
 use utf8;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
-use Mouse;
-use Mouse::Util::TypeConstraints;
-use App::Sqitch::DateTime;
+use Moo;
+use Types::Standard qw(Str Bool);
 use List::Util qw(max);
 use Try::Tiny;
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has target => (
     is  => 'ro',
-    isa => 'Str',
+    isa => Str,
 );
 
 has show_changes => (
     is      => 'ro',
-    isa     => 'Bool',
+    isa     => Bool,
     lazy    => 1,
     default => sub {
         shift->sqitch->config->get(
@@ -35,7 +34,7 @@ has show_changes => (
 
 has show_tags => (
     is      => 'ro',
-    isa     => 'Bool',
+    isa     => Bool,
     lazy    => 1,
     default => sub {
         shift->sqitch->config->get(
@@ -48,7 +47,7 @@ has show_tags => (
 has date_format => (
     is      => 'ro',
     lazy    => 1,
-    isa     => 'Str',
+    isa     => Str,
     default => sub {
         shift->sqitch->config->get( key => 'status.date_format' ) || 'iso'
     }
@@ -56,11 +55,14 @@ has date_format => (
 
 has project => (
     is      => 'ro',
-    isa     => 'Str',
+    isa     => Str,
     lazy    => 1,
     default => sub {
         my $self = shift;
-        try { $self->plan->project } || do {
+        try { $self->plan->project } catch {
+            # Just die on parse and I/O errors.
+            die $_ if try { $_->ident ne 'plan' };
+
             # Try to extract a project name from the registry.
             my $engine = $self->engine;
             hurl status => __ 'Database not initialized for Sqitch'
@@ -71,7 +73,7 @@ has project => (
                 'Use --project to select which project to query: {projects}',
                 projects => join __ ', ', @projs,
             ) if @projs > 1;
-            $projs[0];
+            return $projs[0];
         };
     },
 );
@@ -104,6 +106,9 @@ sub execute {
     my $state = try {
         $engine->current_state( $self->project )
     } catch {
+        # Just die on parse and I/O errors.
+        die $_ if try { $_->ident ne 'plan' };
+
         # Hrm. Maybe not initialized?
         die $_ if $engine->initialized;
         hurl status => __x(
@@ -147,6 +152,7 @@ sub configure {
     if (my $format = $opt->{date_format}
         || $config->get(key => 'status.date_format')
     ) {
+        require App::Sqitch::DateTime;
         App::Sqitch::DateTime->validate_as_string_format($format);
     }
 
@@ -309,6 +315,12 @@ reading C<sqitch-status>. But if you really want to know how the C<status> comma
 works, read on.
 
 =head1 Interface
+
+=head2 Attributes
+
+=head3 C<target>
+
+URI of the database target from which to read the status.
 
 =head2 Instance Methods
 

@@ -4,42 +4,45 @@ use 5.010;
 use strict;
 use warnings;
 use utf8;
-use Mouse;
-use Mouse::Util::TypeConstraints;
+use Moo;
+use Types::Standard qw(Str Bool HashRef);
 use List::Util qw(first);
 use App::Sqitch::X qw(hurl);
 use Locale::TextDomain qw(App-Sqitch);
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has target => (
     is  => 'ro',
-    isa => 'Str',
+    isa => Str,
 );
 
 has to_change => (
     is  => 'ro',
-    isa => 'Str',
+    isa => Str,
 );
 
 has no_prompt => (
     is  => 'ro',
-    isa => 'Bool'
+    isa => Bool
+);
+
+has prompt_accept => (
+    is  => 'ro',
+    isa => Bool
 );
 
 has log_only => (
     is       => 'ro',
-    isa      => 'Bool',
-    required => 1,
+    isa      => Bool,
     default  => 0,
 );
 
 has variables => (
     is       => 'ro',
-    isa      => 'HashRef',
-    required => 1,
+    isa      => HashRef,
     lazy     => 1,
     default  => sub {
         my $self = shift;
@@ -93,6 +96,11 @@ sub configure {
         as  => 'bool',
     ) // 0;
 
+    $params{prompt_accept} = $config->get(
+        key => 'revert.prompt_accept',
+        as  => 'bool',
+    ) // 1;
+
     return \%params;
 }
 
@@ -127,6 +135,7 @@ sub execute {
     # Now get to work.
     my $engine = $self->engine_for_target($target);
     $engine->no_prompt( $self->no_prompt );
+    $engine->prompt_accept( $self->prompt_accept );
     $engine->log_only( $self->log_only );
     if (my %v = %{ $self->variables }) { $engine->set_variables(%v) }
     $engine->revert( $change );
@@ -162,6 +171,30 @@ works, read on.
 
 Returns a list of L<Getopt::Long> option specifications for the command-line
 options for the C<revert> command.
+
+=head2 Attributes
+
+=head3 C<log_only>
+
+Boolean indicating whether to log the deploy without running the scripts.
+
+=head3 C<no_prompt>
+
+Boolean indicating whether or not to prompt the user to really go through with
+the revert.
+
+=head3 C<prompt_accept>
+
+Boolean value to indicate whether or not the default value for the prompt,
+should the user hit C<return>, is to accept the prompt or deny it.
+
+=head3 C<target>
+
+The deployment target URI.
+
+=head3 C<to_change>
+
+Change to revert to.
 
 =head2 Instance Methods
 

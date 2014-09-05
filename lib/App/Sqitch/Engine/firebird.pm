@@ -12,20 +12,18 @@ use Path::Class;
 use File::Basename;
 use Time::Local;
 use Time::HiRes qw(sleep);
-use Mouse;
+use Moo;
+use App::Sqitch::Types qw(DBH URIDB ArrayRef Maybe Int);
 use namespace::autoclean;
 
 extends 'App::Sqitch::Engine';
-sub dbh; # required by DBIEngine;
-with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has registry_uri => (
     is       => 'ro',
-    isa      => 'URI::db',
+    isa      => URIDB,
     lazy     => 1,
-    required => 1,
     default  => sub {
         my $self = shift;
         my $uri  = $self->uri->clone;
@@ -63,7 +61,7 @@ sub registry_destination {
 
 has dbh => (
     is      => 'rw',
-    isa     => 'DBI::db',
+    isa     => DBH,
     lazy    => 1,
     default => sub {
         my $self = shift;
@@ -72,13 +70,12 @@ has dbh => (
 
         my $dsn = $uri->dbi_dsn . ';ib_dialect=3;ib_charset=UTF8';
         return DBI->connect($dsn, scalar $uri->user, scalar $uri->password, {
-            $uri->query_params,
             PrintError       => 0,
             RaiseError       => 0,
             AutoCommit       => 1,
             ib_enable_utf8   => 1,
             FetchHashKeyName => 'NAME_lc',
-            HandleError          => sub {
+            HandleError      => sub {
                 my ($err, $dbh) = @_;
                 $@ = $err;
                 @_ = ($dbh->state || 'DEV' => $dbh->errstr);
@@ -88,12 +85,13 @@ has dbh => (
     }
 );
 
-has isql => (
+# Need to wait until dbh is defined.
+with 'App::Sqitch::Role::DBIEngine';
+
+has _isql => (
     is         => 'ro',
-    isa        => 'ArrayRef',
+    isa        => ArrayRef,
     lazy       => 1,
-    required   => 1,
-    auto_deref => 1,
     default    => sub {
         my $self = shift;
         my $uri  = $self->uri;
@@ -118,11 +116,12 @@ has isql => (
     },
 );
 
+sub isql { @{ shift->_isql } }
+
 has tz_offset => (
     is       => 'ro',
-    isa      => 'Maybe[Int]',
+    isa      => Maybe[Int],
     lazy     => 1,
-    required => 1,
     default => sub {
         # From: http://stackoverflow.com/questions/2143528/whats-the-best-way-to-get-the-utc-offset-in-perl
         my @t = localtime(time);
@@ -292,19 +291,31 @@ sub _listagg_format {
 }
 
 sub _run {
-    my $self = shift;
-    return $self->sqitch->run( $self->isql, @_ );
+    my $self   = shift;
+    my $sqitch = $self->sqitch;
+    my $uri    = $self->uri;
+    my $pass   = $uri->password or return $sqitch->run( $self->isql, @_ );
+    local $ENV{ISC_PASSWORD} = $pass;
+    return $sqitch->run( $self->isql, @_ );
 }
 
 sub _capture {
-    my $self = shift;
-    return $self->sqitch->capture( $self->isql, @_ );
+    my $self   = shift;
+    my $sqitch = $self->sqitch;
+    my $uri    = $self->uri;
+    my $pass   = $uri->password or return $sqitch->capture( $self->isql, @_ );
+    local $ENV{ISC_PASSWORD} = $pass;
+    return $sqitch->capture( $self->isql, @_ );
 }
 
 sub _spool {
-    my $self = shift;
-    my $fh   = shift;
-    return $self->sqitch->spool( $fh, $self->isql, @_ );
+    my $self   = shift;
+    my $fh     = shift;
+    my $sqitch = $self->sqitch;
+    my $uri    = $self->uri;
+    my $pass   = $uri->password or return $sqitch->spool( $fh, $self->isql, @_ );
+    local $ENV{ISC_PASSWORD} = $pass;
+    return $sqitch->spool( $fh, $self->isql, @_ );
 }
 
 sub run_file {
@@ -866,11 +877,6 @@ sub default_client {
 
 1;
 
-no Mouse;
-__PACKAGE__->meta->make_immutable;
-
-1;
-
 __END__
 
 =encoding utf8
@@ -906,6 +912,11 @@ look like the Firebird interactive SQL utility.
 =head3 C<connection_string>
 
 Constructs a connection string from a database URI for passing to C<isql>.
+
+=head3 C<isql>
+
+Returns a list containing the the C<isql> client and options to be passed to
+it. Used internally when executing scripts.
 
 =head1 Author
 

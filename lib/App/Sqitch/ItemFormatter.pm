@@ -6,10 +6,10 @@ use warnings;
 use utf8;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
-use App::Sqitch::DateTime;
 use List::Util qw(max);
-use Mouse;
-use Mouse::Util::TypeConstraints;
+use Moo;
+use Types::Standard qw(Str Int);
+use Type::Utils qw(enum class_type);
 use String::Formatter;
 use namespace::autoclean;
 use Try::Tiny;
@@ -24,32 +24,30 @@ BEGIN {
     $ENV{ANSI_COLORS_DISABLED} = 1 unless CAN_OUTPUT_COLOR;
 }
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has abbrev => (
     is      => 'ro',
-    isa     => 'Int',
+    isa     => Int,
     default => 0,
 );
 
 has date_format => (
     is       => 'ro',
-    isa      => 'Str',
-    required => 1,
+    isa      => Str,
     default  => 'iso',
 );
 
 has color => (
     is       => 'ro',
     isa      => enum([ qw(always never auto) ]),
-    required => 1,
     default  => 'auto',
 );
 
 has formatter => (
     is      => 'ro',
     lazy    => 1,
-    isa     => 'String::Formatter',
+    isa     => class_type('String::Formatter'),
     default => sub {
         my $self = shift;
         no if $] >= 5.017011, warnings => 'experimental::smartmatch';

@@ -3,21 +3,20 @@ package App::Sqitch::Plan::Pragma;
 use 5.010;
 use utf8;
 use namespace::autoclean;
-use parent 'App::Sqitch::Plan::Line';
-use Mouse;
+use Moo;
+use App::Sqitch::Types qw(Str);
+extends 'App::Sqitch::Plan::Line';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has value => (
     is       => 'ro',
-    isa      => 'Str',
-    required => 0,
+    isa      => Str,
 );
 
 has hspace => (
     is       => 'ro',
-    isa      => 'Str',
-    required => 1,
+    isa      => Str,
     default  => '',
 );
 
@@ -51,8 +50,7 @@ sub as_string {
          . $self->format_note;
 }
 
-__PACKAGE__->meta->make_immutable;
-no Mouse;
+1;
 
 __END__
 
@@ -86,6 +84,10 @@ The value of the pragma.
 =head3 C<op>
 
 The operator, including surrounding white space.
+
+=head3 C<hspace>
+
+The horizontal space between the pragma and its value.
 
 =head2 Instance Methods
 

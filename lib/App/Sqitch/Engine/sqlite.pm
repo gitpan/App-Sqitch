@@ -9,14 +9,13 @@ use App::Sqitch::X qw(hurl);
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::Plan::Change;
 use Path::Class;
-use Mouse;
+use Moo;
+use App::Sqitch::Types qw(URIDB DBH ArrayRef);
 use namespace::autoclean;
 
 extends 'App::Sqitch::Engine';
-sub dbh; # required by DBIEngine;
-with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 sub BUILD {
     my $self = shift;
@@ -32,9 +31,8 @@ sub BUILD {
 
 has registry_uri => (
     is       => 'ro',
-    isa      => 'URI::db',
+    isa      => URIDB,
     lazy     => 1,
-    required => 1,
     default  => sub {
         my $self = shift;
         my $uri  = $self->uri->clone;
@@ -81,7 +79,7 @@ sub default_client { 'sqlite3' }
 
 has dbh => (
     is      => 'rw',
-    isa     => 'DBI::db',
+    isa     => DBH,
     lazy    => 1,
     default => sub {
         my $self = shift;
@@ -107,7 +105,6 @@ has dbh => (
                     return;
                 },
             },
-            $uri->query_params,
         });
 
         # Make sure we support this version.
@@ -121,12 +118,13 @@ has dbh => (
     }
 );
 
-has sqlite3 => (
+# Need to wait until dbh is defined.
+with 'App::Sqitch::Role::DBIEngine';
+
+has _sqlite3 => (
     is         => 'ro',
-    isa        => 'ArrayRef',
+    isa        => ArrayRef,
     lazy       => 1,
-    required   => 1,
-    auto_deref => 1,
     default    => sub {
         my $self = shift;
 
@@ -155,6 +153,8 @@ has sqlite3 => (
         ];
     },
 );
+
+sub sqlite3 { @{ shift->_sqlite3 } }
 
 sub initialized {
     my $self = shift;
@@ -245,8 +245,7 @@ sub _read {
     return $self->sqitch->quote_shell($cmd);
 }
 
-__PACKAGE__->meta->make_immutable;
-no Mouse;
+1;
 
 1;
 
@@ -274,6 +273,13 @@ Returns the path to the SQLite client. If C<--db-client> was passed to
 C<sqitch>, that's what will be returned. Otherwise, it uses the
 C<core.sqlite.client> configuration value, or else defaults to C<sqlite3> (or
 C<sqlite3.exe> on Windows), which should work if it's in your path.
+
+=head2 Instance Methods
+
+=head3 C<sqlite3>
+
+Returns a list containing the the C<sqlite3> client and options to be passed to
+it. Used internally when executing scripts.
 
 =head1 Author
 

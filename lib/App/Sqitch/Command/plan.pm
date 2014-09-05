@@ -6,14 +6,15 @@ use warnings;
 use utf8;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
-use Mouse;
-use Mouse::Util::TypeConstraints;
+use Moo;
+use Types::Standard qw(Str Int ArrayRef Bool);
+use Type::Utils qw(class_type);
 use App::Sqitch::ItemFormatter;
 use namespace::autoclean;
 use Try::Tiny;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 my %FORMATS;
 $FORMATS{raw} = <<EOF;
@@ -66,46 +67,44 @@ $FORMATS{oneline} = '%{:event}C%h %l%{reset}C %n%{cyan}C%t%{reset}C';
 
 has event => (
     is      => 'ro',
-    isa     => 'Str',
+    isa     => Str,
 );
 
 has change_pattern => (
     is      => 'ro',
-    isa     => 'Str',
+    isa     => Str,
 );
 
 has planner_pattern => (
     is      => 'ro',
-    isa     => 'Str',
+    isa     => Str,
 );
 
 has max_count => (
     is      => 'ro',
-    isa     => 'Int',
+    isa     => Int,
 );
 
 has skip => (
     is      => 'ro',
-    isa     => 'Int',
+    isa     => Int,
 );
 
 has reverse => (
     is      => 'ro',
-    isa     => 'Bool',
+    isa     => Bool,
     default => 0,
 );
 
 has format => (
     is       => 'ro',
-    isa      => 'Str',
-    required => 1,
+    isa      => Str,
     default  => $FORMATS{medium},
 );
 
 has formatter => (
     is       => 'ro',
-    isa      => 'App::Sqitch::ItemFormatter',
-    required => 1,
+    isa      => class_type('App::Sqitch::ItemFormatter'),
     lazy     => 1,
     default  => sub { App::Sqitch::ItemFormatter->new },
 );
@@ -141,6 +140,7 @@ sub configure {
         key => 'plan.date_format'
     );
     if ($date_format) {
+        require App::Sqitch::DateTime;
         App::Sqitch::DateTime->validate_as_string_format($date_format);
     } else {
         $date_format = 'iso';
@@ -242,6 +242,36 @@ reading C<sqitch-plan>. But if you really want to know how the C<plan> command
 works, read on.
 
 =head1 Interface
+
+=head2 Attributes
+
+=head3 C<change_pattern>
+
+Regular expression to match against change names.
+
+=head3 C<planner_pattern>
+
+Regular expression to match against planner names.
+
+=head3 C<event>
+
+Event type buy which to filter entries to display.
+
+=head3 C<format>
+
+Display format template.
+
+=head3 C<max_count>
+
+Maximum number of entries to display.
+
+=head3 C<reverse>
+
+Reverse the usual order of the display of entries.
+
+=head3 C<skip>
+
+Number of entries to skip before displaying entries.
 
 =head2 Instance Methods
 

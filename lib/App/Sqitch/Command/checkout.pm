@@ -4,8 +4,8 @@ use 5.010;
 use strict;
 use warnings;
 use utf8;
-use Mouse;
-use Mouse::Util::TypeConstraints;
+use Moo;
+use App::Sqitch::Types qw(Str);
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use App::Sqitch::Plan;
@@ -16,13 +16,12 @@ use namespace::autoclean;
 extends 'App::Sqitch::Command';
 with 'App::Sqitch::Role::RevertDeployCommand';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has client => (
     is       => 'ro',
-    isa      => 'Str',
+    isa      => Str,
     lazy     => 1,
-    required => 1,
     default  => sub {
         my $sqitch = shift->sqitch;
         return $sqitch->config->get( key => 'core.vcs.client' )
@@ -63,6 +62,7 @@ sub execute {
     my $engine = $self->engine_for_target($target);
     $engine->with_verify( $self->verify );
     $engine->no_prompt( $self->no_prompt );
+    $engine->prompt_accept( $self->prompt_accept );
     $engine->log_only( $self->log_only );
 
     # What branch are we on?

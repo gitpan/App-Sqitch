@@ -4,8 +4,9 @@ use 5.010;
 use strict;
 use warnings;
 use utf8;
-use Mouse::Role;
-use Mouse::Util::TypeConstraints;
+use Moo::Role;
+use App::Sqitch::Types qw(Str Bool HashRef);
+use Type::Utils qw(enum);
 use namespace::autoclean;
 
 requires 'sqitch';
@@ -13,30 +14,33 @@ requires 'command';
 requires 'options';
 requires 'configure';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has target => (
     is  => 'ro',
-    isa => 'Str',
+    isa => Str,
 );
 
 has verify => (
     is       => 'ro',
-    isa      => 'Bool',
-    required => 1,
+    isa      => Bool,
     default  => 0,
 );
 
 has log_only => (
     is       => 'ro',
-    isa      => 'Bool',
-    required => 1,
+    isa      => Bool,
     default  => 0,
 );
 
 has no_prompt => (
     is  => 'ro',
-    isa => 'Bool'
+    isa => Bool
+);
+
+has prompt_accept => (
+    is  => 'ro',
+    isa => Bool
 );
 
 has mode => (
@@ -51,8 +55,7 @@ has mode => (
 
 has deploy_variables => (
     is       => 'ro',
-    isa      => 'HashRef',
-    required => 1,
+    isa      => HashRef,
     lazy     => 1,
     default  => sub {
         my $self = shift;
@@ -64,8 +67,7 @@ has deploy_variables => (
 
 has revert_variables => (
     is       => 'ro',
-    isa      => 'HashRef',
-    required => 1,
+    isa      => HashRef,
     lazy     => 1,
     default  => sub {
         my $self = shift;
@@ -153,6 +155,14 @@ around configure => sub {
         as  => 'bool',
     ) // 0;
 
+    $params->{prompt_accept} = $config->get(
+        key => "$cmd.prompt_accept",
+        as  => 'bool',
+    ) // $config->get(
+        key => 'revert.prompt_accept',
+        as  => 'bool',
+    ) // 1;
+
     return $params;
 };
 
@@ -188,6 +198,35 @@ Adds options common to the commands that revert and deploy.
 =head3 C<configure>
 
 Configures the options common to commands that revert and deploy.
+
+=head2 Attributes
+
+=head3 C<log_only>
+
+Boolean indicating whether to log the deploy without running the scripts.
+
+=head3 C<no_prompt>
+
+Boolean indicating whether or not to prompt the user to really go through with
+the revert.
+
+=head3 C<prompt_accept>
+
+Boolean value to indicate whether or not the default value for the prompt,
+should the user hit C<return>, is to accept the prompt or deny it.
+
+=head3 C<target>
+
+The deployment target URI.
+
+=head3 C<verify>
+
+Boolean indicating whether or not to run verify scripts after deploying
+changes.
+
+=head3 C<mode>
+
+Deploy mode, one of "change", "tag", or "all".
 
 =head1 See Also
 

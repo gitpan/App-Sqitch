@@ -9,21 +9,19 @@ use App::Sqitch::X qw(hurl);
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::Plan::Change;
 use Path::Class;
-use Mouse;
+use Moo;
+use App::Sqitch::Types qw(DBH URIDB ArrayRef);
 use namespace::autoclean;
 use List::MoreUtils qw(firstidx);
 
 extends 'App::Sqitch::Engine';
-sub dbh; # required by DBIEngine;
-with 'App::Sqitch::Role::DBIEngine';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has registry_uri => (
     is       => 'ro',
-    isa      => 'URI::db',
+    isa      => URIDB,
     lazy     => 1,
-    required => 1,
     default  => sub {
         my $self = shift;
         my $uri = $self->uri->clone;
@@ -43,14 +41,22 @@ sub registry_destination {
 
 has dbh => (
     is      => 'rw',
-    isa     => 'DBI::db',
+    isa     => DBH,
     lazy    => 1,
     default => sub {
         my $self = shift;
         $self->use_driver;
 
         my $uri = $self->registry_uri;
-        my $dbh = DBI->connect($uri->dbi_dsn, scalar $uri->user, scalar $uri->password, {
+        my $pass = $uri->password || do {
+            # Read the default MySQL configuration.
+            # http://dev.mysql.com/doc/refman/5.0/en/option-file-options.html
+            if (eval 'require MySQL::Config; 1') {
+                my %cfg = MySQL::Config::parse_defaults('my', [qw(client mysql)]);
+                $cfg{password};
+            }
+        };
+        my $dbh = DBI->connect($uri->dbi_dsn, scalar $uri->user, $pass, {
             PrintError           => 0,
             RaiseError           => 0,
             AutoCommit           => 1,
@@ -85,7 +91,6 @@ has dbh => (
                     return;
                 },
             },
-            $uri->query_params,
         });
 
         # Make sure we support this version.
@@ -103,12 +108,13 @@ has dbh => (
     }
 );
 
-has mysql => (
+# Need to wait until dbh is defined.
+with 'App::Sqitch::Role::DBIEngine';
+
+has _mysql => (
     is         => 'ro',
-    isa        => 'ArrayRef',
+    isa        => ArrayRef,
     lazy       => 1,
-    required   => 1,
-    auto_deref => 1,
     default    => sub {
         my $self = shift;
         my $uri  = $self->uri;
@@ -146,6 +152,8 @@ has mysql => (
         return \@ret;
     },
 );
+
+sub mysql { @{ shift->_mysql } }
 
 sub key    { 'mysql' }
 sub name   { 'MySQL' }
@@ -247,18 +255,30 @@ sub _listagg_format {
 
 sub _run {
     my $self = shift;
-    return $self->sqitch->run( $self->mysql, @_ );
+    my $sqitch = $self->sqitch;
+    my $uri    = $self->uri;
+    my $pass   = $uri->password or return $sqitch->run( $self->mysql, @_ );
+    local $ENV{MYSQL_PWD} = $pass;
+    return $sqitch->run( $self->mysql, @_ );
 }
 
 sub _capture {
-    my $self = shift;
-    return $self->sqitch->capture( $self->mysql, @_ );
+    my $self   = shift;
+    my $sqitch = $self->sqitch;
+    my $uri    = $self->uri;
+    my $pass   = $uri->password or return $sqitch->capture( $self->mysql, @_ );
+    local $ENV{MYSQL_PWD} = $pass;
+    return $sqitch->capture( $self->mysql, @_ );
 }
 
 sub _spool {
-    my $self = shift;
-    my $fh   = shift;
-    return $self->sqitch->spool( $fh, $self->mysql, @_ );
+    my $self   = shift;
+    my $fh     = shift;
+    my $sqitch = $self->sqitch;
+    my $uri    = $self->uri;
+    my $pass   = $uri->password or return $sqitch->spool( $fh, $self->mysql, @_ );
+    local $ENV{MYSQL_PWD} = $pass;
+    return $sqitch->spool( $fh, $self->mysql, @_ );
 }
 
 sub run_file {
@@ -298,8 +318,7 @@ sub _cid {
     };
 }
 
-__PACKAGE__->meta->make_immutable;
-no Mouse;
+1;
 
 1;
 
@@ -317,6 +336,15 @@ App::Sqitch::Engine::mysql - Sqitch MySQL Engine
 
 App::Sqitch::Engine::mysql provides the MySQL storage engine for Sqitch. It
 supports MySQL 5.6.4 and higher, as well as MariaDB 5.3.0 and higher.
+
+=head1 Interface
+
+=head2 Instance Methods
+
+=head3 C<mysql>
+
+Returns a list containing the the C<mysql> client and options to be passed to
+it. Used internally when executing scripts.
 
 =head1 Author
 

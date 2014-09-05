@@ -1,29 +1,29 @@
 package App::Sqitch::Engine;
 
 use 5.010;
-use Mouse;
+use Moo;
 use strict;
 use utf8;
 use Try::Tiny;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use List::Util qw(first max);
-use URI::db;
+use URI::db 0.15;
+use App::Sqitch::Types qw(Str Int Sqitch Plan Bool HashRef URI Maybe);
 use namespace::autoclean;
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has sqitch => (
     is       => 'ro',
-    isa      => 'App::Sqitch',
+    isa      => Sqitch,
     required => 1,
 );
 
 has client => (
     is       => 'ro',
-    isa      => 'Str',
+    isa      => Str,
     lazy     => 1,
-    required => 1,
     default  => sub {
         my $self = shift;
         my $sqitch = $self->sqitch;
@@ -55,10 +55,13 @@ has client => (
     },
 );
 
+has _target_set => (is => 'rw');
+
 has target => (
     is      => 'ro',
-    isa     => 'Str',
+    isa     => Str,
     lazy    => 1,
+    trigger => sub { shift->_target_set(1) }, # Excludes default and built values.
     default => sub {
         my $self = shift;
         my $engine = $self->key;
@@ -69,7 +72,7 @@ has target => (
 
 has destination => (
     is      => 'ro',
-    isa     => 'Str',
+    isa     => Str,
     lazy    => 1,
     default => sub {
         my $self = shift;
@@ -92,30 +95,36 @@ sub registry_destination { shift->destination }
 
 has start_at => (
     is  => 'rw',
-    isa => 'Str'
+    isa => Str
 );
 
 has no_prompt => (
     is      => 'rw',
-    isa     => 'Bool',
+    isa     => Bool,
     default => 0,
+);
+
+has prompt_accept => (
+    is      => 'rw',
+    isa     => Bool,
+    default => 1,
 );
 
 has log_only => (
     is      => 'rw',
-    isa     => 'Bool',
+    isa     => Bool,
     default => 0,
 );
 
 has with_verify => (
     is      => 'rw',
-    isa     => 'Bool',
+    isa     => Bool,
     default => 0,
 );
 
 has max_name_length => (
     is      => 'rw',
-    isa     => 'Int',
+    isa     => Int,
     default => 0,
     lazy    => 1,
     default => sub {
@@ -128,23 +137,20 @@ has max_name_length => (
 
 has plan => (
     is       => 'rw',
-    isa      => 'App::Sqitch::Plan',
-    required => 1,
+    isa      => Plan,
     lazy     => 1,
     default  => sub { shift->sqitch->plan }
 );
 
 has _variables => (
-    traits  => ['Hash'],
     is      => 'rw',
-    isa     => 'HashRef[Str]',
+    isa     => HashRef[Str],
     default => sub { {} },
-    handles => {
-        variables       => 'elements',
-        set_variables   => 'set',
-        clear_variables => 'clear',
-    },
 );
+
+sub variables       { %{ shift->_variables }       }
+sub set_variables   {    shift->_variables({ @_ }) }
+sub clear_variables { %{ shift->_variables } = ()  }
 
 # * If not passed
 #   a. Look for core.$engine.target; or
@@ -159,7 +165,7 @@ sub BUILD {
     }
 }
 
-has uri => ( is => 'ro', isa => 'URI::db', lazy => 1, default => sub {
+has uri => ( is => 'ro', isa => URI, lazy => 1, default => sub {
     my $self   = shift;
     my $sqitch = $self->sqitch;
     my $config = $sqitch->config;
@@ -168,7 +174,7 @@ has uri => ( is => 'ro', isa => 'URI::db', lazy => 1, default => sub {
 
     # Get the target, but only if it has been passed, not the default,
     # because the default may call back into uri for an infinite loop!
-    my $target = $self->meta->find_attribute_by_name('target')->has_value($self)
+    my $target = $self->_target_set
         ? $self->target : $config->get( key => "core.$engine.target" );
 
     if ($target) {
@@ -197,9 +203,8 @@ has uri => ( is => 'ro', isa => 'URI::db', lazy => 1, default => sub {
 
 has registry => (
     is       => 'ro',
-    isa      => 'Maybe[Str]', # May be undef in a subclass.
+    isa      => Maybe[Str], # May be undef in a subclass.
     lazy     => 1,
-    required => 1,
     default  => sub {
         my $self   = shift;
         my $engine = $self->key;
@@ -419,7 +424,7 @@ sub revert {
                 'Revert changes to {change} from {destination}?',
                 change      => $change->format_name_with_tags,
                 destination => $self->destination,
-            ), 'Yes');
+            ), $self->prompt_accept ? 'Yes' : 'No' );
         }
 
     } else {
@@ -442,7 +447,7 @@ sub revert {
             } unless $sqitch->ask_y_n(__x(
                 'Revert all changes from {destination}?',
                 destination => $self->destination,
-            ), 'Yes');
+            ), $self->prompt_accept ? 'Yes' : 'No' );
         }
     }
 
@@ -1220,8 +1225,7 @@ sub search_events {
     hurl "$class has not implemented search_events()";
 }
 
-__PACKAGE__->meta->make_immutable;
-no Mouse;
+1;
 
 __END__
 
@@ -1395,7 +1399,6 @@ but some engines, such as L<SQLite|App::Sqitch::Engine::sqlite>, may use a
 separate database. Used internally to name the target when the registration
 tables are created.
 
-
 =head3 C<start_at>
 
 The point in the plan from which to start deploying changes.
@@ -1445,10 +1448,10 @@ tables are created.
 Get, set, and clear engine variables. Variables are defined as key/value pairs
 to be passed to the engine client in calls to C<deploy> and C<revert>, if the
 client supports variables. For example, the
-L<PostgreSQL engine|App::Sqitch::Engine::pg> passes all the variables to
-the C<psql> client via the C<--set> option, while the
-L<Oracle engine|App::Sqitch::Engine::oracle> engine sets them via the
-SQL*Plus C<DEFINE> command.
+L<PostgreSQL|App::Sqitch::Engine::pg> and L<Vertica|App::Sqitch::Engine::vertica>
+engines pass all the variables to their C<psql> and C<vsql> clients via the
+C<--set> option, while the L<Oracle engine|App::Sqitch::Engine::oracle> engine
+sets them via the SQL*Plus C<DEFINE> command.
 
 =head3 C<deploy>
 

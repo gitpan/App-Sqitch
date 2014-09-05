@@ -4,35 +4,34 @@ use 5.010;
 use strict;
 use warnings;
 use utf8;
-use Mouse;
-use Mouse::Util::TypeConstraints;
+use Moo;
+use Types::Standard qw(Str HashRef);
 use App::Sqitch::X qw(hurl);
 use Locale::TextDomain qw(App-Sqitch);
 use List::Util qw(first);
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has target => (
     is  => 'ro',
-    isa => 'Str',
+    isa => Str,
 );
 
 has from_change => (
     is  => 'ro',
-    isa => 'Str',
+    isa => Str,
 );
 
 has to_change => (
     is  => 'ro',
-    isa => 'Str',
+    isa => Str,
 );
 
 has variables => (
     is       => 'ro',
-    isa      => 'HashRef',
-    required => 1,
+    isa      => HashRef,
     lazy     => 1,
     default  => sub {
         shift->sqitch->config->get_section( section => 'verify.variables' );
@@ -148,6 +147,24 @@ works, read on.
 
 Returns a list of L<Getopt::Long> option specifications for the command-line
 options for the C<verify> command.
+
+=head2 Attributes
+
+=head3 C<onto_change>
+
+Change onto which to rebase the target.
+
+=head3 C<target>
+
+The verify target database URI.
+
+=head3 C<from_change>
+
+Change from which to verify changes.
+
+=head3 C<to_change>
+
+Change up to which to verify changes.
 
 =head2 Instance Methods
 

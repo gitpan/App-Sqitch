@@ -7,38 +7,37 @@ use utf8;
 use Locale::TextDomain qw(App-Sqitch);
 use App::Sqitch::X qw(hurl);
 use File::Copy;
-use Mouse;
+use Moo;
+use App::Sqitch::Types qw(Str ArrayRef ConfigBool);
 use namespace::autoclean;
 
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.995';
+our $VERSION = '0.996';
 
 has requires => (
     is       => 'ro',
-    isa      => 'ArrayRef[Str]',
-    required => 1,
+    isa      => ArrayRef[Str],
     default  => sub { [] },
 );
 
 has conflicts => (
     is       => 'ro',
-    isa      => 'ArrayRef[Str]',
-    required => 1,
+    isa      => ArrayRef[Str],
     default  => sub { [] },
 );
 
 has note => (
     is       => 'ro',
-    isa      => 'ArrayRef[Str]',
-    required => 1,
+    isa      => ArrayRef[Str],
     default  => sub { [] },
 );
 
 has open_editor => (
     is       => 'ro',
-    isa      => 'ConfigBool',
-    coerce   => 1,
+    isa      => ConfigBool,
+    lazy     => 1,
+    coerce   => ConfigBool->coercion,
     default  => sub {
         my $self = shift;
         return $self->sqitch->config->get(
@@ -207,6 +206,20 @@ options for the C<rework> command.
 
 Processes the configuration and command options and returns a hash suitable
 for the constructor.
+
+=head2 Attributes
+
+=head3 C<note>
+
+Text of the change note.
+
+=head3 C<requires>
+
+List of required changes.
+
+=head3 C<conflicts>
+
+List of conflicting changes.
 
 =head2 Instance Methods
 
