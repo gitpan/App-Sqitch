@@ -12,34 +12,32 @@ use App::Sqitch::Types qw(DBH ArrayRef);
 
 extends 'App::Sqitch::Engine';
 
-our $VERSION = '0.996';
+our $VERSION = '0.997';
 
 sub key    { 'vertica' }
 sub name   { 'Vertica' }
-sub driver { 'DBD::Pg 2.0' }
+sub driver { 'DBD::ODBC 1.43' }
 sub default_client { 'vsql' }
 
-has '+destination' => (
-    default  => sub {
-        my $self = shift;
+sub destination {
+    my $self = shift;
 
-        # Just use the target unless it looks like a URI.
-        my $target = $self->target;
-        return $target if $target !~ /:/;
+    # Just use the target name if it doesn't look like a URI or if the URI
+    # includes the database name.
+    return $self->target->name if $self->target->name !~ /:/
+        || $self->target->uri->dbname;
 
-        # Use the URI sans password, and with the database name added.
-        my $uri = $self->uri->clone;
-        $uri->password(undef) if $uri->password;
-        $uri->dbname(
-               $ENV{VSQL_DATABASE}
-            || $uri->user
-            || $ENV{VSQL_USER}
-            || $self->sqitch->sysuser
-        ) unless $uri->dbname;
-        return $uri->as_string;
-    },
-);
-
+    # Use the URI sans password, and with the database name added.
+    my $uri = $self->target->uri->clone;
+    $uri->password(undef) if $uri->password;
+    $uri->dbname(
+           $ENV{VSQL_DATABASE}
+        || $uri->user
+        || $ENV{VSQL_USER}
+        || $self->sqitch->sysuser
+    );
+    return $uri->as_string;
+}
 has _vsql => (
     is         => 'ro',
     isa        => ArrayRef,
@@ -154,6 +152,10 @@ sub initialize {
         schema => $schema
     ) if $self->initialized;
 
+    # Check the database version.
+    my $vline = $self->dbh->selectcol_arrayref('SELECT version()')->[0];
+    my ($maj) = $vline =~ /\bv?(\d+)/;
+
     my $file = file(__FILE__)->dir->file('vertica.sql');
 
     # Need to write a temp file; no :"registry" variable syntax.
@@ -161,6 +163,8 @@ sub initialize {
         'SELECT quote_ident(?)', undef, $schema
     );
     (my $sql = scalar $file->slurp) =~ s{:"registry"}{$schema}g;
+    # No LONG VARCHAR before Vertica 7.
+    $sql =~ s/LONG //g if $maj < 7;
     require File::Temp;
     my $fh = File::Temp->new;
     print $fh $sql;

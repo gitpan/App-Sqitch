@@ -35,6 +35,7 @@ lib/App/Sqitch/Command/bundle.pm
 lib/App/Sqitch/Command/checkout.pm
 lib/App/Sqitch/Command/config.pm
 lib/App/Sqitch/Command/deploy.pm
+lib/App/Sqitch/Command/engine.pm
 lib/App/Sqitch/Command/help.pm
 lib/App/Sqitch/Command/init.pm
 lib/App/Sqitch/Command/log.pm
@@ -74,6 +75,7 @@ lib/App/Sqitch/Plan/Pragma.pm
 lib/App/Sqitch/Plan/Tag.pm
 lib/App/Sqitch/Role/DBIEngine.pm
 lib/App/Sqitch/Role/RevertDeployCommand.pm
+lib/App/Sqitch/Target.pm
 lib/App/Sqitch/Types.pm
 lib/App/Sqitch/X.pm
 lib/LocaleData/de/LC_MESSAGES/App-Sqitch.mo
@@ -86,8 +88,11 @@ lib/sqitch-checkout-usage.pod
 lib/sqitch-checkout.pod
 lib/sqitch-config-usage.pod
 lib/sqitch-config.pod
+lib/sqitch-configuration.pod
 lib/sqitch-deploy-usage.pod
 lib/sqitch-deploy.pod
+lib/sqitch-engine-usage.pod
+lib/sqitch-engine.pod
 lib/sqitch-help-usage.pod
 lib/sqitch-help.pod
 lib/sqitch-init-usage.pod
@@ -115,6 +120,7 @@ lib/sqitch-verify.pod
 lib/sqitch.pod
 lib/sqitchchanges.pod
 lib/sqitchcommands.pod
+lib/sqitchguides.pod
 lib/sqitchtutorial-firebird.pod
 lib/sqitchtutorial-mysql.pod
 lib/sqitchtutorial-oracle.pod
@@ -134,11 +140,11 @@ t/command.t
 t/config.t
 t/configuration.t
 t/datetime.t
-t/dburi.t
 t/depend.t
 t/deploy.t
 t/die.pl
 t/echo.pl
+t/engine.conf
 t/engine.t
 t/engine/deploy/func/add_user.sql
 t/engine/deploy/users.sql
@@ -147,6 +153,7 @@ t/engine/revert/func/add_user.sql
 t/engine/revert/users.sql
 t/engine/revert/widgets.sql
 t/engine/sqitch.plan
+t/engine_cmd.t
 t/firebird.t
 t/help.t
 t/init.t
@@ -198,6 +205,7 @@ t/tag.t
 t/tag_cmd.t
 t/target.conf
 t/target.t
+t/target_cmd.t
 t/templates.conf
 t/user.conf
 t/verify.t

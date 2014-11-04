@@ -12,7 +12,7 @@ use List::Util qw(first);
 use namespace::autoclean;
 extends 'App::Sqitch::Command';
 
-our $VERSION = '0.996';
+our $VERSION = '0.997';
 
 has target => (
     is  => 'ro',
@@ -83,7 +83,7 @@ sub configure {
 
 sub execute {
     my $self = shift;
-    my %args = $self->parse_args(@_);
+    my %args = $self->parse_args(target => $self->target, args => \@_);
 
     # Die on unknowns.
     if (my @unknown = @{ $args{unknown}} ) {
@@ -96,10 +96,10 @@ sub execute {
     }
 
     # Warn on multiple targets.
-    my $target = $self->target // shift @{ $args{targets} };
+    my $target = shift @{ $args{targets} };
     $self->warn(__x(
         'Too many targets specified; connecting to {target}',
-        target => $target,
+        target => $target->name,
     )) if @{ $args{targets} };
 
     # Warn on too many changes.
@@ -112,7 +112,7 @@ sub execute {
     )) if @{ $args{changes} };
 
     # Now get to work.
-    my $engine = $self->engine_for_target($target);
+    my $engine = $target->engine;
     if (my %v = %{ $self->variables }) { $engine->set_variables(%v) }
     $engine->verify($from, $to);
     return $self;

@@ -1,4 +1,4 @@
-App/Sqitch version 0.996
+App/Sqitch version 0.997
 ========================
 
 [![CPAN version](https://badge.fury.io/pl/App-Sqitch.svg)](http://badge.fury.io/pl/App-Sqitch)
@@ -6,7 +6,7 @@ App/Sqitch version 0.996
 
 [Sqitch](http://sqitch.org/) is a database change management application. It
 currently supports PostgreSQL 8.4+, SQLite 3.7.11+, MySQL 5.6.4+, Oracle 10g+,
-Firebard 2.0+, and Vertica 6.0+.
+Firebird 2.0+, and Vertica 6.0+.
 
 What makes it different from your typical
 [migration](http://guides.rubyonrails.org/migrations.html) approaches? A few

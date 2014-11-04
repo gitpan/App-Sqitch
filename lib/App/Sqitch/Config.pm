@@ -12,7 +12,7 @@ use utf8;
 
 extends 'Config::GitLike';
 
-our $VERSION = '0.996';
+our $VERSION = '0.997';
 
 has '+confname' => ( default => 'sqitch.conf' );
 has '+encoding' => ( default => 'UTF-8' );
@@ -138,7 +138,7 @@ An alias for C<local_file()> for use by the parent class.
 =head3 C<get_section>
 
   my $core = $config->get_section(section => 'core');
-  my $pg   = $config->get_section(section => 'core.pg');
+  my $pg   = $config->get_section(section => 'engine.pg');
 
 Returns a hash reference containing only the keys within the specified
 section or subsection.

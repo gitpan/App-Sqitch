@@ -9,7 +9,7 @@ use App::Sqitch::X qw(hurl);
 use Locale::TextDomain qw(App-Sqitch);
 use namespace::autoclean;
 
-our $VERSION = '0.996';
+our $VERSION = '0.997';
 
 has conflicts => (
     is       => 'ro',
@@ -77,7 +77,7 @@ has id => (
         my $change = $plan->find( $self->key_name ) // hurl plan => __x(
             'Unable to find change "{change}" in plan {file}',
             change => $self->key_name,
-            file   => $plan->sqitch->plan_file,
+            file   => $plan->file,
         );
         return $change->id;
     }
